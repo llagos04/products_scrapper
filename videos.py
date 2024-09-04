@@ -138,19 +138,23 @@ def main():
         if metadata:
             keywords = get_response(metadata['title'], metadata['description'])
             
+            # Crear el enlace del iframe
+            iframe_link = f"https://www.youtube.com/embed/{video_id}"
+            
             result_data.append({
                 'Link': link,
+                'Iframe Link': iframe_link,
                 'Title': metadata['title'],
                 'Keywords': keywords,
-                
             })
             print(f"Generadas keywords para el video: {metadata['title']}")
             print(f"Keywords: {keywords}")
+            print(f"Iframe Link: {iframe_link}")
         else:
             print(f"No se pudo obtener metadatos para el video: {link}")
     
     save_to_excel(result_data, 'video_keywords.xlsx')
-    print("Keywords y metadatos guardados en video_keywords.xlsx")
+    print("Keywords, metadatos y enlaces de iframe guardados en video_keywords.xlsx")
 
 if __name__ == '__main__':
     main()
