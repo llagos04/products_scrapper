@@ -14,18 +14,22 @@ from langchain_core.messages import HumanMessage
 import time
 from colorama import Fore, Style
 
+from playwright.sync_api import sync_playwright  # Asegúrate de tener Playwright instalado
+
+
 
 from urllib.parse import urljoin, urlparse
 
 load_dotenv()  # Cargar variables de entorno
 
 metadata = {
-    "domain": "https://nude-project.com/es",
+    "domain": "https://latiendadelosminerales.com/",
     "process_batch": 20,
     "timeout": 20,
     "metadata_batch": 3,
     "llm_select_batch": 20,
-    "url_limit": 1000,
+    "url_limit": 500,
+    "playwright": True,
 }
 
 ##################################################################################################
@@ -43,30 +47,65 @@ def get_all_urls(domain, max_urls=metadata["url_limit"]):
     urls_to_visit = [domain]  # Lista de URLs pendientes de visitar
     all_urls = []  # Lista para almacenar todas las URLs encontradas
 
-    # Mientras haya URLs por visitar y no se haya alcanzado el máximo de URLs
-    while urls_to_visit and len(all_urls) < max_urls:
-        current_url = urls_to_visit.pop(0)
-        if current_url not in visited:
-            visited.add(current_url)
-            try:
-                response = requests.get(current_url)
-                if response.status_code == 200:
-                    
-                    soup = BeautifulSoup(response.content, 'html.parser')
-                    # Buscar todas las etiquetas <a> con enlaces
-                    for link in soup.find_all('a', href=True):
-                        href = link['href']
-                        # Convertir los enlaces relativos en absolutos
-                        full_url = urljoin(domain, href)
-                        # Validar que la URL pertenece al mismo dominio
-                        if is_same_domain(domain, full_url) and full_url not in visited:
-                            urls_to_visit.append(full_url)
-                            all_urls.append(full_url)
-                            # print(f"Full url {full_url}")
-                            if len(all_urls) >= max_urls:
-                                break
-            except Exception as e:
-                print(f"get_all_urls: Error al acceder a {current_url}: {e}")
+    if metadata.get("playwright", False):
+        print("Usando Playwright para extraer URLs...")
+        
+        # Iniciar Playwright
+        with sync_playwright() as p:
+            # Abrir el navegador en modo headless (sin interfaz gráfica)
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+
+            while urls_to_visit and len(all_urls) < max_urls:
+                current_url = urls_to_visit.pop(0)
+                if current_url not in visited:
+                    visited.add(current_url)
+                    try:
+                        # Cargar la página usando Playwright
+                        page.goto(current_url)
+                        time.sleep(2)  # Esperar un poco para que cargue completamente la página
+
+                        # Extraer todos los enlaces de la página
+                        links = page.query_selector_all("a")
+                        for link in links:
+                            href = link.get_attribute("href")
+                            if href:
+                                full_url = urljoin(domain, href)
+                                # Validar que la URL pertenece al mismo dominio
+                                if is_same_domain(domain, full_url) and full_url not in visited:
+                                    urls_to_visit.append(full_url)
+                                    all_urls.append(full_url)
+                                    if len(all_urls) >= max_urls:
+                                        break
+                    except Exception as e:
+                        print(f"get_all_urls (Playwright): Error al acceder a {current_url}: {e}")
+
+            browser.close()  # Cerrar el navegador al finalizar
+
+    else:
+        print("Usando requests y BeautifulSoup para extraer URLs...")
+        # Mientras haya URLs por visitar y no se haya alcanzado el máximo de URLs
+        while urls_to_visit and len(all_urls) < max_urls:
+            current_url = urls_to_visit.pop(0)
+            if current_url not in visited:
+                visited.add(current_url)
+                try:
+                    response = requests.get(current_url)
+                    if response.status_code == 200:
+                        soup = BeautifulSoup(response.content, 'html.parser')
+                        # Buscar todas las etiquetas <a> con enlaces
+                        for link in soup.find_all('a', href=True):
+                            href = link['href']
+                            # Convertir los enlaces relativos en absolutos
+                            full_url = urljoin(domain, href)
+                            # Validar que la URL pertenece al mismo dominio
+                            if is_same_domain(domain, full_url) and full_url not in visited:
+                                urls_to_visit.append(full_url)
+                                all_urls.append(full_url)
+                                if len(all_urls) >= max_urls:
+                                    break
+                except Exception as e:
+                    print(f"get_all_urls: Error al acceder a {current_url}: {e}")
 
     return all_urls
 
@@ -102,10 +141,12 @@ def get_product_metadata(url):
 
         # Verificar si los metadatos existen
         if not og_title or not og_image or not og_description:
-            # print(f"get_product_metadata: No se encontraron metadatos Open Graph en la URL: {url}")
             return None
 
+        # Procesar el título para cortar en el primer guion
         title = og_title["content"].strip()
+        title = title.split(" - ")[0]  # Cortar en el primer guion
+
         image = og_image["content"].strip()
         description = og_description["content"].strip()
         
@@ -121,9 +162,16 @@ def get_product_metadata(url):
             {"tag": "span", "class": "current-price"},
             {"tag": "span", "class": "actual-price"},
             {"tag": "span", "class": "sale-price"},
-            {"tag": "div", "class": "price"},
             {"tag": "div", "class": "product-price"},
-            {"tag": "div", "class": "price-value"}
+            {"tag": "div", "class": "price"},
+            {"tag": "div", "class": "Price"},
+            {"tag": "div", "class": "ProductMeta__Price"},
+            {"tag": "div", "class": "amount"},
+            {"tag": "div", "class": "price-value"},
+            {"tag": "div", "class": "price-current"},
+            {"tag": "div", "class": "current-price"},
+            {"tag": "div", "class": "actual-price"},
+            {"tag": "div", "class": "sale-price"},
         ]
 
         # Intentar encontrar el precio usando los posibles selectores
@@ -134,11 +182,39 @@ def get_product_metadata(url):
                 price = price_tag.text.strip()
                 break
 
+        # Si no se encuentra el precio en los selectores de HTML, buscarlo en los scripts
+        if not price:
+            # Buscar el script que contiene los datos del producto
+            script_content = soup.find("script", text=re.compile(r'_amtm_tm_product_'))
+            if script_content:
+                script_text = script_content.string
+
+                # Usar expresiones regulares para extraer el precio del script
+                price_match = re.search(r'"price":([\d.]+)', script_text)
+                if price_match:
+                    price = price_match.group(1).strip()
+                    print(f"Precio encontrado en script: {price}")
+                else:
+                    print("No se encontró el precio en el script.")
+                    return None 
+            else:
+                print("No se encontró el script con datos del producto.")
+                return None 
+
+        # Si se encuentra un precio, formatearlo correctamente
+        if price and price != "Precio no disponible":
+            try:
+                # Convertir el precio a un número flotante, formatearlo con dos decimales y agregar el símbolo €
+                price_float = float(price)
+                price = f"{price_float:,.2f}€".replace('.', ',')  # Formatear el precio
+            except ValueError:
+                price = "Precio no disponible"
+
         if not price:
             price = "Precio no disponible"
 
         return {
-            'name': title,
+            'name': title,  # El título ya se cortó antes del guion
             'image_url': image,
             'description': description,
             'price': price,
@@ -147,6 +223,7 @@ def get_product_metadata(url):
     except Exception as e:
         print(f"get_product_metadata: Error al procesar la URL {url}: {e}")
         return None
+
 
 def extract_and_clean_html(url):
     headers = {
@@ -248,6 +325,8 @@ async def fetch(session, link):
         elapsed_time = end_time - start_time
         # print(f"Finalizado procesamiento del link: {link}, Tiempo: {elapsed_time:.2f} segundos")
         return result
+
+
 
 async def process_links_async(links):
     async with aiohttp.ClientSession() as session:
@@ -527,6 +606,15 @@ def save_to_excel(data, file_name):
     df.to_excel(file_name, index=False)
 
 
+def save_to_txt(data, file_name):
+    with open(file_name, 'w', encoding='utf-8') as file:
+        for product in data:
+            file.write(f"{product['name']}\n")
+            file.write(f"Precio: {product['price']}\n\n")
+            file.write(f"{product['description']}\n\n")
+            file.write(f"Información extraída de [{product['name']}]({product['url']})\n\n")
+            file.write("-------\n\n")
+
 ##################################################################################################
 ##################################### Programa Principal #########################################
 ##################################################################################################
@@ -591,6 +679,9 @@ def main():
     # Guardar resultados en Excel
     save_to_excel(unique_data, 'product_keywords.xlsx')
     print(Fore.MAGENTA + Style.BRIGHT + "Datos guardados en product_keywords.xlsx" + Style.RESET_ALL)
+
+    save_to_txt(unique_data, 'product_info.txt')
+    print(Fore.MAGENTA + Style.BRIGHT + "Datos guardados en product_info.txt" + Style.RESET_ALL)
 
 
 
