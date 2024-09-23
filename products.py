@@ -20,7 +20,7 @@ from urllib.parse import urljoin, urlparse
 load_dotenv()  # Cargar variables de entorno
 
 metadata = {
-    "domain": "https://worldshishas.com/",
+    "domain": "https://nude-project.com/es",
     "process_batch": 20,
     "timeout": 20,
     "metadata_batch": 3,
