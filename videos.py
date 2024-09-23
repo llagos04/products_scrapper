@@ -158,3 +158,69 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+
+
+
+def get_product_metadata(url):
+    try:
+        response = requests.get(url)
+        if response.status_code != 200:
+            print(f"Error al acceder a la URL: {url}")
+            return None
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Extraer metadatos Open Graph
+        og_title = soup.find("meta", property="og:title")
+        og_image = soup.find("meta", property="og:image")
+        og_description = soup.find("meta", property="og:description")
+
+        # Verificar si los metadatos existen
+        if not og_title or not og_image or not og_description:
+            print(f"No se encontraron metadatos Open Graph en la URL: {url}")
+            return None
+
+        title = og_title["content"].strip()
+        image = og_image["content"].strip()
+        description = og_description["content"].strip()
+        
+        # Posibles selectores para el precio
+        price_selectors = [
+            {"tag": "span", "class": "product-price"},
+            {"tag": "span", "class": "price"},
+            {"tag": "span", "class": "Price"},
+            {"tag": "span", "class": "ProductMeta__Price"},
+            {"tag": "span", "class": "amount"},
+            {"tag": "span", "class": "price-value"},
+            {"tag": "span", "class": "price-current"},
+            {"tag": "span", "class": "current-price"},
+            {"tag": "span", "class": "actual-price"},
+            {"tag": "span", "class": "sale-price"},
+            {"tag": "div", "class": "price"},
+            {"tag": "div", "class": "product-price"},
+            {"tag": "div", "class": "price-value"}
+        ]
+
+        # Intentar encontrar el precio usando los posibles selectores
+        price = None
+        for selector in price_selectors:
+            price_tag = soup.find(selector["tag"], class_=selector["class"])
+            if price_tag:
+                price = price_tag.text.strip()
+                break
+
+        if not price:
+            price = "Precio no disponible"
+
+        return {
+            'name': title,
+            'image_url': image,
+            'description': description,
+            'price': price,
+            'url': url
+        }
+    except Exception as e:
+        print(f"Error al procesar la URL {url}: {e}")
+        return None    
