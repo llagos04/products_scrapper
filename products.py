@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-import aiohttp  # Asegúrate de tener esta línea
+import aiohttp
 import html2text
 import re
 from dotenv import load_dotenv
@@ -14,22 +14,19 @@ from langchain_core.messages import HumanMessage
 import time
 from colorama import Fore, Style
 
-from playwright.sync_api import sync_playwright  # Asegúrate de tener Playwright instalado
-
-
-
+from playwright.sync_api import sync_playwright
 from urllib.parse import urljoin, urlparse
 
 load_dotenv()  # Cargar variables de entorno
 
 metadata = {
-    "domain": "https://latiendadelosminerales.com/",
+    "domain": "https://worldshishas.com/",
     "process_batch": 20,
     "timeout": 20,
     "metadata_batch": 3,
     "llm_select_batch": 20,
-    "url_limit": 500,
-    "playwright": True,
+    "url_limit": 10000,
+    "playwright": False,
 }
 
 ##################################################################################################
@@ -146,6 +143,7 @@ def get_product_metadata(url):
         # Procesar el título para cortar en el primer guion
         title = og_title["content"].strip()
         title = title.split(" - ")[0]  # Cortar en el primer guion
+        title = title.split("|")[0]  # Cortar en el primer separador
 
         image = og_image["content"].strip()
         description = og_description["content"].strip()
@@ -389,7 +387,7 @@ async def extract_metadata_async(processed_links):
                 'description': metadata['description'],
                 'image_url': metadata['image_url'],
                 'price': metadata['price'],
-                'keywords': keywords,
+                'keywords': metadata['name'],
                 'cleaned_content': clean_text,
             }
         else:
@@ -451,10 +449,6 @@ prompts = {
     Tu tarea es la siguiente:
 
     - **Identificar** los títulos que corresponden a **páginas de productos individuales**.
-    - **Ejemplos de títulos de productos**:
-        - "Zapatos Deportivos Modelo X123"
-        - "Vestido Rojo de Fiesta - Edición Limitada"
-        - "Reloj Inteligente Serie 5"
     - Estos títulos suelen ser descriptivos y específicos, incluyendo detalles como color, modelo, talla o características únicas.
     - **No seleccionar** títulos que correspondan a:
     - **Categorías de productos**: Ejemplo: "Camisetas", "Pantalones", "Accesorios"
