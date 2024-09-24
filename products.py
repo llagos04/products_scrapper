@@ -13,23 +13,74 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage
 import time
 from colorama import Fore, Style
+from urllib.parse import urljoin
 
 from playwright.sync_api import sync_playwright  # Asegúrate de tener Playwright instalado
-
-
-
+from playwright.async_api import async_playwright
 from urllib.parse import urljoin, urlparse
 
 load_dotenv()  # Cargar variables de entorno
 
 metadata = {
-    "domain": "https://latiendadelosminerales.com/",
-    "process_batch": 20,
+    "domain": "https://www.hogaryhobby.com/tienda/",
+    "get_urls_batch": 30,
+    "process_batch": 1,
     "timeout": 20,
     "metadata_batch": 3,
     "llm_select_batch": 20,
-    "url_limit": 500,
+    "url_limit": 2000,
     "playwright": True,
+    "products_sold": "barnices, lacas y otros accesorios para el cuidado de la madera",
+    "product_examples": [
+        "BARNIZ INCOLORO MATE AL AGUA 375 ML",
+        "ALUMINIO ROLLO 2,2KG GRUESO",
+        "CERA PARA MUEBLES NATURAL 250 ML"
+    ],
+    "allow_no_price": True,
+    "ignore_description": True,
+    # clase que se buscará para encontrar la imagen si no se encuentra og image
+    "image_class": "details-gallery__picture details-gallery__photoswipe-index-0", 
+    # title tags que busca si no encuentra og_title
+    "title_tags": [
+            {"tag": "meta", "property": "og:title", "attr": "content"},
+            {"tag": "h1"},
+            {"tag": "title"}
+        ],
+    "price_tags": [
+            {"tag": "span", "class": "details-product-price__value"}, 
+            {"tag": "div", "class": "details-product-price__value"}, 
+            {"tag": "span", "class": "product-price"},
+            {"tag": "span", "class": "Price"},
+            {"tag": "span", "class": "price"},
+            {"tag": "span", "class": "ProductMeta__Price"},
+            {"tag": "span", "class": "amount"},
+            {"tag": "span", "class": "price-value"},
+            {"tag": "span", "class": "price-current"},
+            {"tag": "span", "class": "current-price"},
+            {"tag": "span", "class": "actual-price"},
+            {"tag": "span", "class": "sale-price"},
+            {"tag": "span", "class": "details-product-price__value"},
+            {"tag": "div", "class": "product-price"},
+            {"tag": "div", "class": "price"},
+            {"tag": "div", "class": "Price"},
+            {"tag": "div", "class": "ProductMeta__Price"},
+            {"tag": "div", "class": "amount"},
+            {"tag": "div", "class": "price-value"},
+            {"tag": "div", "class": "price-current"},
+            {"tag": "div", "class": "current-price"},
+            {"tag": "div", "class": "actual-price"},
+            {"tag": "div", "class": "sale-price"},
+        ],
+    "description_tags":[
+            {"tag": "meta", "property": "og:description", "attr": "content"},
+            {"tag": "div", "class": "product-details__product-sku ec-text-muted"},
+            # {"tag": "div", "class": "product-details__product"},
+            {"tag": "div", "class": "product-details"},
+            {"tag": "div", "class": "product-description"},
+            {"tag": "p", "class": "description"},
+            {"tag": "p", "class": "product-info"},
+        ] 
+
 }
 
 ##################################################################################################
@@ -49,21 +100,34 @@ def get_all_urls(domain, max_urls=metadata["url_limit"]):
 
     if metadata.get("playwright", False):
         print("Usando Playwright para extraer URLs...")
-        
+
         # Iniciar Playwright
         with sync_playwright() as p:
             # Abrir el navegador en modo headless (sin interfaz gráfica)
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
+            context = browser.new_context()
+            page = context.new_page()
+
+            # Bloquear recursos innecesarios para reducir el tiempo de carga
+            def block_unnecessary_resources(route, request):
+                if request.resource_type in ['document', 'xhr', 'fetch']:
+                    route.continue_()
+                else:
+                    route.abort()
+
+            page.route("**/*", block_unnecessary_resources)
 
             while urls_to_visit and len(all_urls) < max_urls:
                 current_url = urls_to_visit.pop(0)
+                print(f"Entrando a url: {current_url}")
                 if current_url not in visited:
+                    print(f"Entrando a url por primera vez: {current_url}")
                     visited.add(current_url)
                     try:
-                        # Cargar la página usando Playwright
-                        page.goto(current_url)
-                        time.sleep(2)  # Esperar un poco para que cargue completamente la página
+                        # Cargar la página usando Playwright con un timeout reducido
+                        page.goto(current_url, timeout=10000)  # Timeout de 10 segundos
+                        # Esperar a que aparezcan los enlaces en la página
+                        page.wait_for_selector("a", timeout=5000)  # Esperar máximo 5 segundos
 
                         # Extraer todos los enlaces de la página
                         links = page.query_selector_all("a")
@@ -90,7 +154,7 @@ def get_all_urls(domain, max_urls=metadata["url_limit"]):
             if current_url not in visited:
                 visited.add(current_url)
                 try:
-                    response = requests.get(current_url)
+                    response = requests.get(current_url, timeout=10)
                     if response.status_code == 200:
                         soup = BeautifulSoup(response.content, 'html.parser')
                         # Buscar todas las etiquetas <a> con enlaces
@@ -109,6 +173,7 @@ def get_all_urls(domain, max_urls=metadata["url_limit"]):
 
     return all_urls
 
+
 # Verificar si una URL pertenece al mismo dominio
 def is_same_domain(base_url, target_url):
     base_domain = urlparse(base_url).netloc
@@ -125,67 +190,95 @@ def save_urls_to_txt(urls, file_name):
 ###################### Extracción de Metadatos con Open Graph ####################################
 ##################################################################################################
 
+
 def get_product_metadata(url):
     try:
-        response = requests.get(url)
+        # Definir los encabezados para simular un navegador
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                          'AppleWebKit/537.36 (KHTML, like Gecko) '
+                          'Chrome/85.0.4183.83 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Connection': 'keep-alive'
+        }
+
+        response = requests.get(url, headers=headers)  # Enviar la solicitud con encabezados
         if response.status_code != 200:
-            print(f"get_product_metadata: Error al acceder a la URL: {url}")
+            print(f"get_product_metadata: Error al acceder a la URL: {url} codigo status: {response.status_code}")
             return None
         
         soup = BeautifulSoup(response.content, 'html.parser')
 
-        # Extraer metadatos Open Graph
-        og_title = soup.find("meta", property="og:title")
-        og_image = soup.find("meta", property="og:image")
-        og_description = soup.find("meta", property="og:description")
+        # Definir los selectores posibles para el título
+        title_selectors = metadata["title_tags"]
 
-        # Verificar si los metadatos existen
-        if not og_title or not og_image or not og_description:
-            return None
-
-        # Procesar el título para cortar en el primer guion
-        title = og_title["content"].strip()
-        title = title.split(" - ")[0]  # Cortar en el primer guion
-
-        image = og_image["content"].strip()
-        description = og_description["content"].strip()
+        title = None
+        # Buscar el título secuencialmente
+        for selector in title_selectors:
+            if "property" in selector:  # Caso especial para meta tags
+                tag = soup.find(selector["tag"], property=selector["property"])
+                if tag and tag.get(selector["attr"]):
+                    title = tag[selector["attr"]].strip()
+                    break
+            else:
+                tag = soup.find(selector["tag"])
+                if tag:
+                    title = tag.text.strip()
+                    break
         
+        # Si no se encuentra un título en los selectores anteriores
+        if not title:
+            title = "Título no disponible"
+
+        # Extraer o buscar la imagen
+        og_image = soup.find("meta", property="og:image")
+        if og_image:
+            image = og_image["content"].strip()
+        else:
+            # Si no hay og:image, buscar la imagen con la clase específica
+            image_tag = soup.find("img", class_="details-gallery__picture details-gallery__photoswipe-index-0")
+            image = image_tag["src"].strip() if image_tag else "Imagen no disponible"
+
+         # Definir los selectores posibles para la descripción
+        description_selectors = metadata["description_tags"]
+
+        description = ""
+        # Buscar la descripción secuencialmente
+        if not metadata["ignore_description"]:
+            for selector in description_selectors:
+                if "property" in selector:  # Caso especial para meta tags
+                    tag = soup.find(selector["tag"], property=selector["property"])
+                    if tag and tag.get(selector["attr"]):
+                        description = tag[selector["attr"]].strip()
+                        break
+                else:
+                    tag = soup.find(selector["tag"], class_=selector.get("class"))
+                    if tag:
+                        description = tag.text.strip()
+                        break
+
         # Posibles selectores para el precio
-        price_selectors = [
-            {"tag": "span", "class": "product-price"},
-            {"tag": "span", "class": "price"},
-            {"tag": "span", "class": "Price"},
-            {"tag": "span", "class": "ProductMeta__Price"},
-            {"tag": "span", "class": "amount"},
-            {"tag": "span", "class": "price-value"},
-            {"tag": "span", "class": "price-current"},
-            {"tag": "span", "class": "current-price"},
-            {"tag": "span", "class": "actual-price"},
-            {"tag": "span", "class": "sale-price"},
-            {"tag": "div", "class": "product-price"},
-            {"tag": "div", "class": "price"},
-            {"tag": "div", "class": "Price"},
-            {"tag": "div", "class": "ProductMeta__Price"},
-            {"tag": "div", "class": "amount"},
-            {"tag": "div", "class": "price-value"},
-            {"tag": "div", "class": "price-current"},
-            {"tag": "div", "class": "current-price"},
-            {"tag": "div", "class": "actual-price"},
-            {"tag": "div", "class": "sale-price"},
-        ]
+        price_selectors = metadata["price_tags"]
 
         # Intentar encontrar el precio usando los posibles selectores
         price = None
         for selector in price_selectors:
             price_tag = soup.find(selector["tag"], class_=selector["class"])
             if price_tag:
-                price = price_tag.text.strip()
-                break
+                print({f"Price tag: {price_tag}"})
+                if(price_tag.text.strip()):
+                    print({f"Price tag strip: {price_tag.text.strip()}"})
+                    price = price_tag.text.strip()
+                    break 
+                
+                
+
 
         # Si no se encuentra el precio en los selectores de HTML, buscarlo en los scripts
         if not price:
             # Buscar el script que contiene los datos del producto
-            script_content = soup.find("script", text=re.compile(r'_amtm_tm_product_'))
+            script_content = soup.find("script", string=re.compile(r'_amtm_tm_product_'))
             if script_content:
                 script_text = script_content.string
 
@@ -196,25 +289,37 @@ def get_product_metadata(url):
                     print(f"Precio encontrado en script: {price}")
                 else:
                     print("No se encontró el precio en el script.")
-                    return None 
+                    price = "Precio no disponible"
             else:
                 print("No se encontró el script con datos del producto.")
-                return None 
+                price = "Precio no disponible"
 
         # Si se encuentra un precio, formatearlo correctamente
         if price and price != "Precio no disponible":
             try:
-                # Convertir el precio a un número flotante, formatearlo con dos decimales y agregar el símbolo €
-                price_float = float(price)
+                # Eliminar el símbolo de € y cualquier espacio antes de convertir a float
+                price_clean = price.replace('€', '').strip()
+                
+                # Reemplazar la coma por un punto para convertir correctamente en float
+                price_clean = price_clean.replace(',', '.')
+                
+                # Intentar convertir el precio a un número flotante
+                price_float = float(price_clean)
+                
+                # Formatear el precio con dos decimales y agregar el símbolo €
                 price = f"{price_float:,.2f}€".replace('.', ',')  # Formatear el precio
             except ValueError:
+                # Si falla la conversión, se deja el precio como está
+                pass
+
+        if not price or price == "Precio no disponible":
+            if metadata["allow_no_price"]:
                 price = "Precio no disponible"
-
-        if not price:
-            price = "Precio no disponible"
-
+            else:
+                return None
+        
         return {
-            'name': title,  # El título ya se cortó antes del guion
+            'name': title,
             'image_url': image,
             'description': description,
             'price': price,
@@ -223,7 +328,6 @@ def get_product_metadata(url):
     except Exception as e:
         print(f"get_product_metadata: Error al procesar la URL {url}: {e}")
         return None
-
 
 def extract_and_clean_html(url):
     headers = {
@@ -289,11 +393,22 @@ async def fetch(session, link):
     async with sem:  # Limita el número de peticiones concurrentes
         start_time = time.perf_counter()  # Iniciar el temporizador
         try:
-            # print(f"Iniciando procesamiento del link: {link}")
-            timeout = aiohttp.ClientTimeout(total=metadata["timeout"])  # Timeout total de 10 segundos
-            async with session.get(link, timeout=timeout) as response:
+            print(f"Iniciando procesamiento del link: {link}")
+            timeout = aiohttp.ClientTimeout(total=metadata["timeout"])  # Timeout total
+
+            # Definir encabezados y cookies
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                              'AppleWebKit/537.36 (KHTML, like Gecko) '
+                              'Chrome/85.0.4183.83 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Connection': 'keep-alive'
+            }
+            
+            async with session.get(link, timeout=timeout, headers=headers) as response:
                 if response.status != 200:
-                    # print(f"fetch: Error al acceder a la URL: {link}, Status: {response.status}")
+                    print(f"fetch: Error al acceder a la URL: {link}, Status: {response.status}")
                     return None
 
                 content = await response.text()
@@ -311,19 +426,19 @@ async def fetch(session, link):
                         "title": og_title["content"]
                     }
                 else:
-                    # print(f"fetch: No se encontraron metadatos Open Graph en la URL: {link}")
+                    print(f"fetch: No se encontraron metadatos Open Graph en la URL: {link}")
                     result = None
 
         except asyncio.TimeoutError:
-            # print(f"fetch: Timeout al acceder a la URL {link}")
+            print(f"fetch: Timeout al acceder a la URL {link}")
             result = None
         except Exception as e:
-            # print(f"fetch: Error al procesar la URL {link}: {e}")
+            print(f"fetch: Error al procesar la URL {link}: {e}")
             result = None
 
         end_time = time.perf_counter()  # Finalizar el temporizador
         elapsed_time = end_time - start_time
-        # print(f"Finalizado procesamiento del link: {link}, Tiempo: {elapsed_time:.2f} segundos")
+        print(f"Finalizado procesamiento del link: {link}, Tiempo: {elapsed_time:.2f} segundos")
         return result
 
 
@@ -369,19 +484,19 @@ def process_links(links):
 #Función asincrona para extraer metadatos
 async def extract_metadata_async(processed_links):
     async def process_single_product(link):
-        # print(f"Procesando producto: {link}")
+        print(f"Procesando producto: {link}")
 
         # Obtener metadatos del producto y verificar que existan
         metadata = await asyncio.to_thread(get_product_metadata, link)
         if metadata is None:
-            # print(f"No se encontraron metadatos para la URL: {link}. Se omite este enlace.")
+            print(f"No se encontraron metadatos para la URL: {link}. Se omite este enlace.")
             return None
 
         clean_text, content_metadata = await asyncio.to_thread(extract_and_clean_html, link)
         
         if clean_text:
             # Aquí puedes generar las keywords si lo deseas
-            keywords = ""
+            keywords = metadata["name"].split('-')[0]
             
             return {
                 'url': metadata['url'],
@@ -438,23 +553,23 @@ prompts = {
     Respuesta: Precio del producto + lista de cuatro keywords separadas por comas. Ej: Precio€, Keyword1, Keyword2, Keyword3, Keyword4
 
     """,
-    "product_selection_prompt": """
+   "product_selection_prompt": f"""
     A continuación, vas a recibir una lista de elementos en formato de lista de Python, donde cada elemento es un diccionario con las claves "link" y "title". Por ejemplo:
 
     [
-        {"link": "https://ejemplo.com/producto123", "title": "Camiseta Blanca de Algodón - Talla M"},
-        {"link": "https://ejemplo.com/categorias/camisetas", "title": "Camisetas"},
-        {"link": "https://ejemplo.com/info/envios", "title": "Información de Envíos"},
+        {{"link": "https://ejemplo.com/producto123", "title": "{metadata['product_examples'][0]}"}},
+        {{"link": "https://ejemplo.com/producto156", "title": "{metadata['product_examples'][1]}"}},
+        {{"link": "https://ejemplo.com/info/envios", "title": "Información de Envíos"}},
         ...
     ]
 
     Tu tarea es la siguiente:
 
-    - **Identificar** los títulos que corresponden a **páginas de productos individuales**.
+    - **Identificar** los títulos que corresponden a **páginas de productos individuales** en el contexto de una tienda online que vende {metadata['products_sold']}.
     - **Ejemplos de títulos de productos**:
-        - "Zapatos Deportivos Modelo X123"
-        - "Vestido Rojo de Fiesta - Edición Limitada"
-        - "Reloj Inteligente Serie 5"
+        - {metadata['product_examples'][0]}
+        - {metadata['product_examples'][1]}
+        - {metadata['product_examples'][2]}
     - Estos títulos suelen ser descriptivos y específicos, incluyendo detalles como color, modelo, talla o características únicas.
     - **No seleccionar** títulos que correspondan a:
     - **Categorías de productos**: Ejemplo: "Camisetas", "Pantalones", "Accesorios"
@@ -467,7 +582,7 @@ prompts = {
     - **Formato estricto**: No añadas ninguna indicación extra, texto adicional ni comentarios antes o después de la lista.
     - **Ejemplo de salida**:
 
-    ["https://ejemplo.com/producto123", "https://ejemplo.com/producto456"]
+    ["https://ejemplo.com/producto123", "https://ejemplo.com/producto156"]
 
     Esta es la lista de elementos que debes procesar:
     """,
@@ -626,7 +741,7 @@ def main():
     # Temporizar el proceso de get_all_urls
     print(Fore.YELLOW + Style.BRIGHT + "Iniciando proceso de obtención de URLs..." + Style.RESET_ALL)
     start_time = time.time()
-    product_links = get_all_urls(domain, max_urls=metadata["url_limit"])
+    product_links = get_all_urls(domain, metadata["url_limit"])
     print("Urls totales: ")
     print(len(product_links))
     product_links = list(set(product_links))
@@ -666,7 +781,7 @@ def main():
     result_data = asyncio.run(extract_metadata_async(selected_links))
 
     end_time = time.time()
-    print(Fore.CYAN + Style.BRIGHT + f"Procesamiento extracción metadatos finalizado en {end_time - start_time:.2f} segundos." + Style.RESET_ALL)
+    print(Fore.CYAN + Style.BRIGHT + f"Procesamiento extracción metadatos finalizado en {end_time - start_time:.2f} segundos. Links con metadatos extraidos: {len(result_data)}" + Style.RESET_ALL)
 
     # Eliminar productos duplicados basados en el título
     unique_data = []
