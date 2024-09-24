@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-import aiohttp  # Asegúrate de tener esta línea
+import aiohttp
 import html2text
 import re
 from dotenv import load_dotenv
@@ -504,7 +504,7 @@ async def extract_metadata_async(processed_links):
                 'description': metadata['description'],
                 'image_url': metadata['image_url'],
                 'price': metadata['price'],
-                'keywords': keywords,
+                'keywords': metadata['name'],
                 'cleaned_content': clean_text,
             }
         else:
