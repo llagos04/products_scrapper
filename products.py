@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-import aiohttp
+import aiohttp  # Asegúrate de tener esta línea
 import html2text
 import re
 from dotenv import load_dotenv
@@ -18,36 +18,51 @@ from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright  # Asegúrate de tener Playwright instalado
 from playwright.async_api import async_playwright
 from urllib.parse import urljoin, urlparse
+import json
 
 load_dotenv()  # Cargar variables de entorno
 
 metadata = {
-    "domain": "https://www.hogaryhobby.com/tienda/",
+    "domain": "https://nude-project.com", # Url de entrada
     "get_urls_batch": 30,
-    "process_batch": 1,
-    "timeout": 20,
-    "metadata_batch": 3,
-    "llm_select_batch": 20,
-    "url_limit": 2000,
-    "playwright": True,
-    "products_sold": "barnices, lacas y otros accesorios para el cuidado de la madera",
+    "process_batch": 35,
+    "timeout": 20, # Tiempo hasta que se corta una petición que se queda colgada (en segundos)
+    "metadata_batch": 35,
+    "llm_select_batch": 30, # Cantidad de urls que se le pasan en un mismo prompt al LLM
+
+    "url_limit": 4000, # Cantidad de URLs de la primera pasada (urls scrapeadas al inicio sin procesar)
+    "playwright": False, 
+
+    # Para que el LLM funcione mejor al identificar si un url es un producto
+    "products_sold": "ropa, camisetas, pantalones...",
     "product_examples": [
-        "BARNIZ INCOLORO MATE AL AGUA 375 ML",
-        "ALUMINIO ROLLO 2,2KG GRUESO",
-        "CERA PARA MUEBLES NATURAL 250 ML"
+        "CAMISETA NUDE TOUR",
+        "PANTALONES MARRON",
+        "CINTURON NUDE BROWN"
     ],
-    "allow_no_price": True,
-    "ignore_description": True,
+    "categories_examples": [
+        "PANTALONES LARGOS",
+        "CAMISETAS LARGAS",
+        "SUDADERAS COMFY"
+    ],
+
+    # Hay ecommerce que tienen productos sin precio 
+    "allow_no_price": False,
+    "ignore_description": False, # Meter descripcion
+
     # clase que se buscará para encontrar la imagen si no se encuentra og image
-    "image_class": "details-gallery__picture details-gallery__photoswipe-index-0", 
+    "image_class": "details-gallery_picture details-gallery_photoswipe-index-0", 
+
     # title tags que busca si no encuentra og_title
     "title_tags": [
             {"tag": "meta", "property": "og:title", "attr": "content"},
-            {"tag": "h1"},
-            {"tag": "title"}
+            {"tag": "h1", "class": "h1 page-title"},
+            # {"tag": "title"}
         ],
     "price_tags": [
-            {"tag": "span", "class": "details-product-price__value"}, 
+            {"tag": "span", "class": "product-price current-price-value"}, 
+            {"tag": "div", "class": "elementor-widget-woocommerce-product-price"}, 
+            {"tag": "p", "class": "price"}, 
             {"tag": "div", "class": "details-product-price__value"}, 
             {"tag": "span", "class": "product-price"},
             {"tag": "span", "class": "Price"},
@@ -72,17 +87,22 @@ metadata = {
             {"tag": "div", "class": "sale-price"},
         ],
     "description_tags":[
-            {"tag": "meta", "property": "og:description", "attr": "content"},
-            {"tag": "div", "class": "product-details__product-sku ec-text-muted"},
-            # {"tag": "div", "class": "product-details__product"},
+            # {"tag": "meta", "property": "og:description", "attr": "content"},
+            {"tag": "div", "class": "metafield-rich_text_field"},
+            {"tag": "div", "class": "elementor-widget-woocommerce-product-content"},
+            {"tag": "div", "class": "product-description"},
+            {"tag": "div", "class": "product-description"},
+            {"tag": "div", "class": "product-details__product"},
             {"tag": "div", "class": "product-details"},
             {"tag": "div", "class": "product-description"},
             {"tag": "p", "class": "description"},
             {"tag": "p", "class": "product-info"},
-        ] 
+        ] ,
+    "pass_elements":{
+        "description":0,
+    }
 
 }
-
 ##################################################################################################
 ######################### Leer el txt ó scrapear todos los urls ##################################
 ##################################################################################################
@@ -243,37 +263,44 @@ def get_product_metadata(url):
          # Definir los selectores posibles para la descripción
         description_selectors = metadata["description_tags"]
 
-        description = ""
+        description = "No hay descripción disponible"
         # Buscar la descripción secuencialmente
         if not metadata["ignore_description"]:
-            for selector in description_selectors:
+            for index, selector in enumerate(description_selectors):
+                
                 if "property" in selector:  # Caso especial para meta tags
                     tag = soup.find(selector["tag"], property=selector["property"])
-                    if tag and tag.get(selector["attr"]):
+                    if tag and tag.get(selector["attr"]) :
                         description = tag[selector["attr"]].strip()
                         break
                 else:
                     tag = soup.find(selector["tag"], class_=selector.get("class"))
-                    if tag:
+                    if tag :
                         description = tag.text.strip()
                         break
 
-        # Posibles selectores para el precio
+                # Posibles selectores para el precio
         price_selectors = metadata["price_tags"]
+
+        # Definir las variantes de 0 que queremos evitar
+        zero_variants = ["0", "0.00", "0,00", "0.00€", "0,00€", "€0", "€0.00", "€0,00", "€ 0", "€ 0.00", "€ 0,00"]
 
         # Intentar encontrar el precio usando los posibles selectores
         price = None
         for selector in price_selectors:
             price_tag = soup.find(selector["tag"], class_=selector["class"])
+            
             if price_tag:
-                print({f"Price tag: {price_tag}"})
-                if(price_tag.text.strip()):
-                    print({f"Price tag strip: {price_tag.text.strip()}"})
-                    price = price_tag.text.strip()
-                    break 
+                print(f"Price tag found: {price_tag}")
+                price_candidate = price_tag.text.strip()
                 
-                
-
+                # Comprobamos si el precio no es una de las variantes de 0
+                if price_candidate and price_candidate not in zero_variants:
+                    print(f"Valid price found: {price_candidate}")
+                    price = price_candidate
+                    break  # Rompemos el ciclo si encontramos un precio válido
+                else:
+                    print(f"Found price variant of zero: {price_candidate}, continuing search...")
 
         # Si no se encuentra el precio en los selectores de HTML, buscarlo en los scripts
         if not price:
@@ -294,23 +321,46 @@ def get_product_metadata(url):
                 print("No se encontró el script con datos del producto.")
                 price = "Precio no disponible"
 
-        # Si se encuentra un precio, formatearlo correctamente
+                # Si se encuentra un precio, formatearlo correctamente
+
         if price and price != "Precio no disponible":
             try:
-                # Eliminar el símbolo de € y cualquier espacio antes de convertir a float
-                price_clean = price.replace('€', '').strip()
-                
-                # Reemplazar la coma por un punto para convertir correctamente en float
-                price_clean = price_clean.replace(',', '.')
-                
-                # Intentar convertir el precio a un número flotante
-                price_float = float(price_clean)
-                
-                # Formatear el precio con dos decimales y agregar el símbolo €
-                price = f"{price_float:,.2f}€".replace('.', ',')  # Formatear el precio
+                # Caso específico para el formato con "precio actual"
+                if "El precio actual es:" in price:
+                    # Extraer el precio actual
+                    price_actual = price.split("El precio actual es:")[-1].strip()
+
+                    # Eliminar el símbolo de € y cualquier espacio antes de convertir a float
+                    price_clean = price_actual.replace('€', '').strip()
+
+                    # Reemplazar la coma por un punto para convertir correctamente en float
+                    price_clean = price_clean.replace(',', '.')
+
+                    # Intentar convertir el precio a un número flotante
+                    price_float = float(price_clean)
+
+                    # Formatear el precio con dos decimales y agregar el símbolo €
+                    price = f"{price_float:,.2f}€".replace('.', ',')  # Formatear el precio
+                else:
+                    # Si no se encuentra el patrón específico, procesar como antes
+                    # Tomar solo el precio original (eliminar todo después de la primera aparición de "El precio original era")
+                    price_original = price.split("El precio original era:")[0].strip()
+
+                    # Eliminar el símbolo de € y cualquier espacio antes de convertir a float
+                    price_clean = price_original.replace('€', '').strip()
+
+                    # Reemplazar la coma por un punto para convertir correctamente en float
+                    price_clean = price_clean.replace(',', '.')
+
+                    # Intentar convertir el precio a un número flotante
+                    price_float = float(price_clean)
+
+                    # Formatear el precio con dos decimales y agregar el símbolo €
+                    price = f"{price_float:,.2f}€".replace('.', ',')  # Formatear el precio
             except ValueError:
                 # Si falla la conversión, se deja el precio como está
                 pass
+
 
         if not price or price == "Precio no disponible":
             if metadata["allow_no_price"]:
@@ -325,6 +375,7 @@ def get_product_metadata(url):
             'price': price,
             'url': url
         }
+    
     except Exception as e:
         print(f"get_product_metadata: Error al procesar la URL {url}: {e}")
         return None
@@ -496,15 +547,15 @@ async def extract_metadata_async(processed_links):
         
         if clean_text:
             # Aquí puedes generar las keywords si lo deseas
-            keywords = metadata["name"].split('-')[0]
+            newName = format_title_for_keyword(metadata["name"])
             
             return {
                 'url': metadata['url'],
-                'name': metadata['name'],
+                'name': newName,
                 'description': metadata['description'],
                 'image_url': metadata['image_url'],
                 'price': metadata['price'],
-                'keywords': metadata['name'],
+                'keywords': newName,
                 'cleaned_content': clean_text,
             }
         else:
@@ -523,6 +574,12 @@ async def extract_metadata_async(processed_links):
         result_data.extend([r for r in results if r is not None])
 
     return result_data
+
+# Función para extraer la parte antes de los delimitadores con espacios alrededor
+def format_title_for_keyword(title):
+    # Expresión regular que captura lo anterior a ' - ', ' | '
+    keyword = re.split(r'\s[-|]\s', title)[0]
+    return keyword
 
 
 
@@ -572,7 +629,7 @@ prompts = {
         - {metadata['product_examples'][2]}
     - Estos títulos suelen ser descriptivos y específicos, incluyendo detalles como color, modelo, talla o características únicas.
     - **No seleccionar** títulos que correspondan a:
-    - **Categorías de productos**: Ejemplo: "Camisetas", "Pantalones", "Accesorios"
+    - **Categorías de productos**: Ejemplo: {metadata['categories_examples'][0]}, {metadata['categories_examples'][1]}, {metadata['categories_examples'][2]}
     - **Información general**: Ejemplo: "Contacto", "Política de Devolución", "Términos y Condiciones", "Buscar"
     - **Páginas de ayuda o soporte**: Ejemplo: "Preguntas Frecuentes", "Soporte al Cliente"
 
@@ -620,7 +677,7 @@ def get_product_keywords(title, description):
 
     return response.content.strip()
 
-async def select_product_links_async(links_with_title, i):
+async def select_product_links_async_llm(links_with_title, i):
     llm = get_llm()
     max_attempts = 3
     attempt = 0
@@ -634,12 +691,15 @@ async def select_product_links_async(links_with_title, i):
             prompt = prompts["product_selection_prompt"] + "\n" + str(links_with_title)
 
             messages = [HumanMessage(content=prompt)]
-            print(f"Ejecutando intento: {attempt} del intérvalo {i}")
+            print(f"Ejecutando intento: {attempt} ")
+            print(f"Prompt: {prompt} ")
 
             # Realizar la invocación de forma asincrónica
             response = await asyncio.to_thread(llm.invoke, messages)
 
             response_text = response.content.strip()
+            print(f"Response: {response_text} ")
+
 
             # Intentar analizar response_text como una lista de Python
             try:
@@ -668,13 +728,16 @@ async def process_selected_links_async(unique_links):
         # Esperar el tiempo especificado antes de iniciar la tarea
         await asyncio.sleep(delay)
         # Ejecutar la llamada asincrónica
-        return await select_product_links_async(batch, i)
+        return await select_product_links_async_llm(batch, i)
 
     tasks = []
     # Procesar en bloques de  metadata["llm_select_batch"] links
     for i in range(0, len(unique_links), metadata["llm_select_batch"]):
         batch = unique_links[i:i +  metadata["llm_select_batch"]]  # Crear lotes de  metadata["llm_select_batch"] enlaces
         # print(f"Programando lote de links desde {i} hasta {i + len(batch)} con un retraso de {i // metadata["llm_select_batch"] * 0.5} segundos")
+
+        print(f"Batch numero: {i} {batch}")
+        
 
         # Crear una tarea para cada batch con un retardo incremental de 0.5s por cada lote
         task = asyncio.create_task(process_batch_with_delay(batch, i //  metadata["llm_select_batch"] * 0.5))
@@ -740,23 +803,30 @@ def main():
     
     # Temporizar el proceso de get_all_urls
     print(Fore.YELLOW + Style.BRIGHT + "Iniciando proceso de obtención de URLs..." + Style.RESET_ALL)
+
     start_time = time.time()
+
     product_links = get_all_urls(domain, metadata["url_limit"])
+
     print("Urls totales: ")
     print(len(product_links))
+
     product_links = list(set(product_links))
     end_time = time.time()
+
     print("Urls unicos: ")
     print(len(product_links))
     print(Fore.YELLOW + Style.BRIGHT + f"Proceso de obtención de URLs finalizado en {end_time - start_time:.2f} segundos." + Style.RESET_ALL)
     
-    # Guardar URLs en archivo
+    # Guardar URLs en archivo - se puede quitar
     save_urls_to_txt(product_links, 'urls_encontrados.txt')
 
     # Temporizar el proceso de process_links
     print(Fore.GREEN + Style.BRIGHT + "Iniciando proceso de procesamiento de links..." + Style.RESET_ALL)
     start_time = time.time()
+
     processed_links = process_links(product_links)
+
     end_time = time.time()
     print(Fore.GREEN + Style.BRIGHT + f"Proceso de procesamiento de links finalizado en {end_time - start_time:.2f} segundos." + Style.RESET_ALL)
 
@@ -764,6 +834,8 @@ def main():
     #Temporizar el proceso de selección de links con LLM
     print(Fore.BLUE + Style.BRIGHT + "Iniciando proceso selección de productos..." + Style.RESET_ALL)
     start_time = time.time()
+
+    print(f"Links a pasar por el llm: {processed_links}")
 
     # Ejecutar la nueva función asíncrona para obtener selected_links
     selected_links = asyncio.run(process_selected_links_async(processed_links))
@@ -797,6 +869,10 @@ def main():
 
     save_to_txt(unique_data, 'product_info.txt')
     print(Fore.MAGENTA + Style.BRIGHT + "Datos guardados en product_info.txt" + Style.RESET_ALL)
+
+    # Guardar el diccionario en un archivo llamado metadata.txt
+    with open('metadata.txt', 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=4)
 
 
 
