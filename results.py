@@ -30,7 +30,7 @@ class ResultsManager:
         from urllib.parse import urlparse
         return urlparse(url).netloc.replace("www.", "")
 
-    def append_results(self, product_details):
+    def append_results(self, product_details, batch_processed_urls):
         """
         Append new product details to the results list, ensuring no duplicates.
         """
@@ -50,6 +50,15 @@ class ResultsManager:
             self.save_to_excel()
         else:
             logging.info("No new unique products to save.")
+        self.save_urls_to_txt(batch_processed_urls)
+    
+    def save_urls_to_txt(self, batch_processed_urls):
+        """
+        Save the processed URLs to a text file.
+        """
+        with open(os.path.join(self.results_folder, 'processed_urls.txt'), 'a') as f:
+            for url in batch_processed_urls:
+                f.write(f"{url}\n")
 
     def save_to_excel(self):
         """

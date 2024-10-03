@@ -3,7 +3,7 @@ import logging
 import time
 from bs4 import BeautifulSoup
 import aiohttp
-from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, NO_OG_IMAGE, NO_OG_DESCRIPTION, NO_OG_TITLE
+from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, NO_OG_IMAGE, NO_OG_DESCRIPTION, NO_OG_TITLE, REQUEST_TIMEOUT
 import re
 
 
@@ -199,7 +199,7 @@ async def fetch_details(session, url, title, semaphore):
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 'Connection': 'keep-alive'
             }
-            timeout = aiohttp.ClientTimeout(total=5)  # Total timeout of 5 seconds
+            timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)  # Total timeout of 5 seconds
 
             async with session.get(url, timeout=timeout, headers=headers) as response:
                 if response.status != 200:

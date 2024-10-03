@@ -117,7 +117,6 @@ async def main():
             logging.info(Fore.GREEN + f"Fetched titles for {len(url_titles)} URLs in {elapsed_time_fetch_titles:.2f} seconds\n" + Style.RESET_ALL)
             
             # discard existing titles
-            logging.info(f"Discarding existing titles from {len(url_titles)} URLs... {results_manager.seen_titles} already exist in results")
             url_titles = [title for title in url_titles if title not in results_manager.seen_titles]
 
             # Select Product URLs
@@ -141,7 +140,7 @@ async def main():
             # Save Results
             logging.info("Saving results...")
             start_time_save_results = time.time()
-            results_manager.append_results(product_details)
+            results_manager.append_results(product_details, batch_urls_to_process)
             elapsed_time_save_results = time.time() - start_time_save_results
             logging.info(Fore.GREEN  + f"Saved {results_manager.total_products} unique products to {results_manager.results_file}\n" + Style.RESET_ALL)
             

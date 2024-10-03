@@ -1,5 +1,5 @@
 # EXECUTION PARAMETERS
-ROOT_URL = "https://nude-project.com/"
+ROOT_URL = "https://www.tiendanimal.es/"
 #ROOT_URL = "https://sismalaser.es"
 #ROOT_URL = "https://worldshishas.com/"
 TARGET_PRODUCTS_N = 1000
@@ -29,6 +29,9 @@ PRICE_TAGS = [
 # TITLE FETCH BATCH SIZE
 CONCURRENT_REQUESTS = 10
 
+# REQUEST TIMEOUT
+REQUEST_TIMEOUT = 15
+
 # LLM BATCH SIZE
 LLM_BATCH_SIZE = 50
 
@@ -38,17 +41,14 @@ LLM_TEMPERATURE = 0.2
 
 # LLM PROMPT
 # Required
-PRODUCTS_SOLD = "ropa, camisetas, pantalones..."
+PRODUCTS_SOLD = "Productos para animales"
 # Not required
 PRODUCT_EXAMPLES = [
-        "Máquina de Soldadura Láser LM-C Industria | Sisma Láser España | Fabricante de Máquinas Láser",
-        "Máquina de Grabado y Marcado Láser BIG SMARK Industria | Sisma Láser España | Fabricante de Máquinas Láser",
-        "Máquina de Soldadura Láser LM-D READY Joyería | Sisma Láser España | Fabricante de Máquinas Láser",
-        "Máquina de Soldadura Láser LM-D READY Dental | Sisma Láser España | Fabricante de Máquinas Láser",
 ]
 # Not required
 CATEGORIES_EXAMPLES = [
-        "Máquinas Láser Industrial",
-        "Máquinas Láser Joyería",
-        "Máquinas Láser Dental"
+        "Perros",
+        "Gatos",
+        "Conejos",
+        "Otros animales",
 ]

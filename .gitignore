@@ -19,4 +19,3 @@ results/
 __pycache__
 scraper.log
 .env
-CONFIG.py
