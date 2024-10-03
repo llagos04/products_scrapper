@@ -32,11 +32,12 @@ def is_html_page(url):
     return True
 
 class Crawler:
-    def __init__(self, domain, is_javascript_driven=False):
+    def __init__(self, domain, is_javascript_driven=False, ignore_links=[]):
         self.domain = domain
         self.is_javascript_driven = is_javascript_driven
         self.visited = set()
         self.urls_to_visit = [domain]
+        self.ignore_links = ignore_links
 
     async def get_next_batch_urls(self, batch_size):
         if self.is_javascript_driven:
@@ -70,7 +71,7 @@ class Crawler:
                                     href = link['href']
                                     full_url = urljoin(self.domain, href)
                                     full_url = urlparse(full_url)._replace(fragment='').geturl()
-                                    if is_same_domain(self.domain, full_url) and full_url not in self.visited:
+                                    if is_same_domain(self.domain, full_url) and full_url not in self.visited and full_url not in self.ignore_links:
                                         self.urls_to_visit.append(full_url)
                             else:
                                 logging.error(f"Failed to load {current_url}, status code: {response.status}")
@@ -128,7 +129,7 @@ class Crawler:
                                 if href:
                                     full_url = urljoin(self.domain, href)
                                     full_url = urlparse(full_url)._replace(fragment='').geturl()
-                                    if is_same_domain(self.domain, full_url) and full_url not in self.visited:
+                                    if is_same_domain(self.domain, full_url) and full_url not in self.visited and full_url not in self.ignore_links:
                                         self.urls_to_visit.append(full_url)
                             await page.close()
                     except Exception as e:

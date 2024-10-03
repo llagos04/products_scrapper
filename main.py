@@ -72,8 +72,12 @@ async def main():
         processed_urls = set()
         start_time = time.time()
 
+        # import links to ignore from ignore_links.txt
+        with open('ignore_links.txt', 'r') as f:
+            ignore_links = [line.strip() for line in f.readlines()]
+
         # Initialize crawler
-        crawler_instance = crawler.Crawler(ROOT_URL, is_javascript_driven)
+        crawler_instance = crawler.Crawler(ROOT_URL, is_javascript_driven, ignore_links)
 
         # Initialize results manager
         execution_number = results.get_execution_number(ROOT_URL)
@@ -97,7 +101,7 @@ async def main():
             start_batch_time = time.time()
             batch_urls = await crawler_instance.get_next_batch_urls(GENERAL_BATCH_SIZE)
             elapsed_batch_time = time.time() - start_batch_time
-            logging.info(Fore.GREEN + f"Crawled {len(batch_urls)} URLs in {elapsed_batch_time:.2f} seconds\n" + Style.RESET_ALL)
+            logging.info(Fore.GREEN + f"Crawled {len(batch_urls)} URLs in {elapsed_batch_time:.2f} seconds + Style.RESET_ALL")
 
             if not batch_urls:
                 logging.info("")
@@ -109,6 +113,11 @@ async def main():
             # Update processed URLs
             processed_urls.update(batch_urls_to_process)
 
+            if len(batch_urls) > 5:
+                logging.info(f"Last 5 processed URLs:\n\t\t{"\n\t\t".join(batch_urls[-5:])}\n")
+            else:
+                logging.info(f"Processed URLs: {"\n\t\t".join(batch_urls)}\n")
+
             # Fetch Titles
             logging.info(f"Fetching titles for {len(batch_urls_to_process)} URLs...")
             start_time_fetch_titles = time.time()
@@ -116,6 +125,11 @@ async def main():
             elapsed_time_fetch_titles = time.time() - start_time_fetch_titles
             logging.info(Fore.GREEN + f"Fetched titles for {len(url_titles)} URLs in {elapsed_time_fetch_titles:.2f} seconds\n" + Style.RESET_ALL)
             
+            if len(url_titles) > 5:
+                logging.info(f"Last 5 fetched titles:\n\t\t{"\n\t\t".join([url_title["title"] for url_title in url_titles[-5:]])}\n")
+            else:
+                logging.info(f"Fetched titles:\n\t\t{"\n\t\t".join([url_title["title"] for url_title in url_titles])}\n")
+
             # discard existing titles
             url_titles = [title for title in url_titles if title not in results_manager.seen_titles]
 
@@ -125,6 +139,11 @@ async def main():
             product_urls_titles = await analizer.select_product_urls(url_titles, LLM_BATCH_SIZE)
             elapsed_time_select_products = time.time() - start_time_select_products
             logging.info(Fore.GREEN + f"Selected {len(product_urls_titles)} product URLs in {elapsed_time_select_products:.2f} seconds\n" + Style.RESET_ALL)
+            
+            if len(product_urls_titles) > 5:
+                logging.info(f"Last 5 selected product URLs:\n\t\t{"\n\t\t".join([url_title["title"] for url_title in product_urls_titles[-5:]])}\n")
+            else:
+                logging.info(f"Selected product URLs:\n\t\t{"\n\t\t".join([url_title["title"] for url_title in product_urls_titles])}\n")
 
             # Fetch Product Details
             logging.info(f"Fetching product details for {len(product_urls_titles)} product URLs...")

@@ -35,7 +35,7 @@ async def fetch_title(session, url, semaphore, max_retries=3):
 
                 async with session.get(url, timeout=timeout, headers=headers) as response:
                     if response.status != 200:
-                        return None
+                        return "Request Error"
 
                     content = await response.text()
 
@@ -51,13 +51,16 @@ async def fetch_title(session, url, semaphore, max_retries=3):
 
                     # try other title tags
                     if not title:
-                        for tag in TITLE_TAGS:
-                            title = soup.find(tag)
+                        # Iterate through each specified tag and attribute in TITLE_TAGS
+                        for entry in TITLE_TAGS:
+                            # Use ** to unpack dictionary entries as keyword arguments
+                            title = soup.find(entry["tag"], class_=entry.get("class"))
                             if title:
+                                # Extract text and strip any excess whitespace
                                 title = title.get_text(strip=True)
                                 break
 
-                    return {'url': url, 'title': title}
+                    return {'url': url, 'title': "Title not found" if not title else title}
             except asyncio.TimeoutError:
                 logging.warning(f"Attempt {attempt}: Timed out fetching {url}")
                 if attempt < max_retries:
