@@ -35,7 +35,7 @@ async def fetch_title(session, url, semaphore, max_retries=3):
 
                 async with session.get(url, timeout=timeout, headers=headers) as response:
                     if response.status != 200:
-                        return "Request Error"
+                        return {'url': url, 'title': f"Status code: {response.status}"}
 
                     content = await response.text()
 
@@ -108,7 +108,7 @@ async def fetch_titles(urls, max_concurrent_requests=10):
                 seen_titles.add(result['title'])
                 filtered_results.append({
                     'url': result['url'],
-                    'title': format_title(result['title'])
+                    'title': result['title']
                 })
 
     logging.info(f"Found {len(filtered_results)} unique titles")
@@ -170,18 +170,20 @@ def fetch_product_details_from_soup(soup):
 
     if price != "Price not found":
         # Format price
-        price = price.replace("€", "").replace(",", ".").strip()
+        formatted_price = price.replace("€", "").replace(",", ".").strip()
         try:
-            price_value = float(price)
-            price = f"{price_value:.2f}€"
+            price_value = float(formatted_price)
+            formatted_price = f"{price_value:.2f}€"
+            price = formatted_price
         except ValueError:
-            price = "Price format error"
+            pass
 
     return {
         "image": image,
         "description": description,
         "price": price
     }
+
 async def fetch_details(session, url, title, semaphore):
     """
     Asynchronously fetch product details for a URL.
@@ -206,7 +208,7 @@ async def fetch_details(session, url, title, semaphore):
 
             async with session.get(url, timeout=timeout, headers=headers) as response:
                 if response.status != 200:
-                    logging.warning(f"Failed to fetch {url}, status code: {response.status}")
+                    logging.error(f"Failed to fetch {url}, status code: {response.status}")
                     return None
 
                 content = await response.text()
@@ -227,7 +229,7 @@ async def fetch_details(session, url, title, semaphore):
                 }
 
         except Exception as e:
-            logging.exception(f"Error fetching details for {url}: {e}")
+            logging.error(f"Error fetching details for {url}: {e}")
             return None
 
 async def fetch_product_details(urls_titles, max_concurrent_requests=10):
@@ -250,3 +252,22 @@ async def fetch_product_details(urls_titles, max_concurrent_requests=10):
         logging.info(f"Found {len(results)} product details")
 
     return results
+
+
+if __name__ == "__main__":
+    # Sample URL to test the function
+    test_url = "https://www.example.com"
+
+    # Asynchronous call to fetch the title of the test URL
+    async def main():
+        # Define logging level
+        logging.basicConfig(level=logging.INFO)
+
+        # Single URL title fetching
+        async with aiohttp.ClientSession() as session:
+            semaphore = asyncio.Semaphore(1)  # Only one request at a time
+            title_result = await fetch_title(session, test_url, semaphore)
+            print(f"Fetched title for {test_url}: {title_result}")
+
+    # Run the asynchronous main function
+    asyncio.run(main())

@@ -30,11 +30,13 @@ class ResultsManager:
         from urllib.parse import urlparse
         return urlparse(url).netloc.replace("www.", "")
 
-    def append_results(self, product_details, batch_processed_urls):
+    def append_results(self, product_details, batch_processed_urls_titles):
         """
         Append new product details to the results list, ensuring no duplicates.
         """
         new_products = []
+        # remove None from product_details
+        product_details = [product for product in product_details if product is not None]
         for product in product_details:
             title = str(product.get('title', '')).strip()
             if title not in self.existing_titles:
@@ -50,40 +52,55 @@ class ResultsManager:
             self.save_to_excel()
         else:
             logging.info("No new unique products to save.")
-        self.save_urls_to_txt(batch_processed_urls)
+        self.save_urls_to_txt(batch_processed_urls_titles)
     
-    def save_urls_to_txt(self, batch_processed_urls):
+    def save_urls_to_txt(self, batch_processed_urls_titles):
         """
         Save the processed URLs to a text file.
         """
         with open(os.path.join(self.results_folder, 'processed_urls.txt'), 'a') as f:
-            for url in batch_processed_urls:
-                f.write(f"{url}\n")
+            for url_title in batch_processed_urls_titles:
+                f.write(f"{url_title["title"]}: {url_title['url']}\n")
+
+        with open(os.path.join(self.results_folder, 'processed_titles.txt'), 'a') as f:
+            for url_title in batch_processed_urls_titles:
+                if url_title["title"] != "Title not found":
+                    f.write(f"{url_title['title']}\n")
 
     def save_to_excel(self):
         """
         Save the products list to an Excel file, ensuring no duplicates.
         """
+        # Rename columns
         df = pd.DataFrame(self.products)
+        df.rename(columns={'title': 'name', 'image': 'image_url'}, inplace=True)
+
+        # Reorder columns
+        df = df[['name', 'description', 'price', 'url', 'image_url']]
 
         if os.path.exists(self.results_file):
             # Read existing data
             existing_df = pd.read_excel(self.results_file)
+            # Rename and reorder existing data to match the new format
+            existing_df.rename(columns={'title': 'name', 'image': 'image_url'}, inplace=True)
+            existing_df = existing_df[['name', 'description', 'price', 'url', 'image_url']]
+            
             # Combine new and existing data
             combined_df = pd.concat([existing_df, df], ignore_index=True)
-            # Drop duplicates based on 'title'
-            combined_df.drop_duplicates(subset=['title'], inplace=True)
+            # Drop duplicates based on 'name'
+            combined_df.drop_duplicates(subset=['name'], inplace=True)
+            
             # Save combined data back to Excel
             combined_df.to_excel(self.results_file, index=False)
             self.total_products = len(combined_df)
-            self.seen_titles = combined_df['title'].astype(str).tolist()
+            self.seen_titles = combined_df['name'].astype(str).tolist()
         else:
-            # Drop duplicates in current batch
-            df.drop_duplicates(subset=['title'], inplace=True)
+            # Drop duplicates in current batch based on 'name'
+            df.drop_duplicates(subset=['name'], inplace=True)
             df.to_excel(self.results_file, index=False)
             self.total_products = len(df)
-            self.seen_titles = df['title'].astype(str).tolist()
-        
+            self.seen_titles = df['name'].astype(str).tolist()
+
         logging.info(f"Saved {self.total_products} products.")
 
         # Clear the products list after saving

@@ -64,6 +64,7 @@ async def main():
         # Check if the domain is JavaScript-driven
         logging.info(f"Checking if {ROOT_URL} is JavaScript-driven...")
         is_javascript_driven = await crawler.is_javascript_driven_async(ROOT_URL)
+        is_javascript_driven = True
         logging.info(f"{ROOT_URL} is {'not ' if not is_javascript_driven else ''}JavaScript-driven.")
 
         # Initialize variables
@@ -124,6 +125,14 @@ async def main():
             url_titles = await fetcher.fetch_titles(batch_urls_to_process, max_concurrent_requests=CONCURRENT_REQUESTS)
             elapsed_time_fetch_titles = time.time() - start_time_fetch_titles
             logging.info(Fore.GREEN + f"Fetched titles for {len(url_titles)} URLs in {elapsed_time_fetch_titles:.2f} seconds\n" + Style.RESET_ALL)
+
+            all_urls_titles = []
+            urls_titles_found = [url_title["url"] for url_title in url_titles]
+            urls_titles_not_found = [url for url in batch_urls_to_process if url not in urls_titles_found]
+            all_urls_titles.extend(url_titles)
+            for url in urls_titles_not_found:
+                all_urls_titles.append({"url": url, "title": "Title not found"})
+            results_manager.save_urls_to_txt(all_urls_titles)
             
             if len(url_titles) > 5:
                 logging.info(f"Last 5 fetched titles:\n\t\t{"\n\t\t".join([url_title["title"] for url_title in url_titles[-5:]])}\n")
@@ -159,7 +168,7 @@ async def main():
             # Save Results
             logging.info("Saving results...")
             start_time_save_results = time.time()
-            results_manager.append_results(product_details, batch_urls_to_process)
+            results_manager.append_results(product_details, all_urls_titles)
             elapsed_time_save_results = time.time() - start_time_save_results
             logging.info(Fore.GREEN  + f"Saved {results_manager.total_products} unique products to {results_manager.results_file}\n" + Style.RESET_ALL)
             
