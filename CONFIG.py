@@ -1,5 +1,5 @@
 # EXECUTION PARAMETERS
-ROOT_URL = "https://www.tiendanimal.es/"
+ROOT_URL = "https://kundebrand.net/"
 #ROOT_URL = "https://sismalaser.es"
 #ROOT_URL = "https://worldshishas.com/"
 TARGET_PRODUCTS_N = 1000
@@ -39,14 +39,10 @@ LLM_TEMPERATURE = 0.2
 
 # LLM PROMPT
 # Required
-PRODUCTS_SOLD = "Productos para animales"
+PRODUCTS_SOLD = "Ukeleles, guitarras, flautas y accesorios"
 # Not required
 PRODUCT_EXAMPLES = [
 ]
 # Not required
 CATEGORIES_EXAMPLES = [
-        "Perros",
-        "Gatos",
-        "Conejos",
-        "Otros animales",
 ]
