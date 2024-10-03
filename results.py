@@ -3,6 +3,7 @@ import pandas as pd
 import shutil
 import logging
 from CONFIG import ROOT_URL
+import logging
 
 class ResultsManager:
     def __init__(self, root_url, execution_number):
@@ -22,7 +23,7 @@ class ResultsManager:
         # Load existing product titles to avoid duplicates
         if os.path.exists(self.results_file):
             existing_df = pd.read_excel(self.results_file)
-            self.existing_titles = set(existing_df['title'].astype(str).tolist())
+            self.existing_titles = set(existing_df['name'].astype(str).tolist())
         else:
             self.existing_titles = set()
 
@@ -126,7 +127,7 @@ class ResultsManager:
             self.save_to_excel()
             self.save_to_txt()
 
-def get_execution_number(root_url):
+def get_execution_number(root_url, fixed=False):
     """
     Read n.txt, increment the execution number, save it back, and return the new execution number.
     """
@@ -139,6 +140,10 @@ def get_execution_number(root_url):
             execution_number = int(f.read())
     else:
         execution_number = 0
+
+    if fixed:
+        return execution_number
+    
     execution_number += 1
     with open(execution_file, 'w') as f:
         f.write(str(execution_number))
