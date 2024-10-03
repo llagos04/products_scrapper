@@ -14,3 +14,8 @@ products.txt
 urls_encontrados.txt
 video_keywords.xlsx
 videos.txt
+venv
+results/
+__pycache__
+scraper.log
+.env
