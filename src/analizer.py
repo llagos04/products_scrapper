@@ -40,6 +40,7 @@ Tu tarea es la siguiente:
 **Instrucciones adicionales:**
 
 - **Salida**: Devuelve una lista en formato de lista de Python que contenga únicamente los enlaces ("link") de las páginas identificadas como productos.
+- **Exigencia**: Ante la duda, categoriza una página como producto, ya se filtrará la lista posteriormente.
 - **Formato estricto**: No añadas ninguna indicación extra, texto adicional ni comentarios antes o después de la lista.
 - **Ejemplo de salida**:
 

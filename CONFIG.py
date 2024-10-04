@@ -1,14 +1,14 @@
 # EXECUTION PARAMETERS
-ROOT_URL = "https://depataverde.es/"
+ROOT_URL = "https://kundebrand.com/"
 #ROOT_URL = "https://sismalaser.es"
 #ROOT_URL = "https://worldshishas.com/"
 TARGET_PRODUCTS_N = 1000
 GENERAL_BATCH_SIZE = 50
 
-USE_RATE_LIMIT=True
+USE_RATE_LIMIT=False
 
 # IGNORE URLS WITH:
-IGNORE_URLS_WITH = "pt-pt"
+IGNORE_URLS_WITH = ""
 
 # WEBSITE_DETAILS
 IMAGE_CLASSES = [
@@ -17,9 +17,9 @@ IMAGE_CLASSES = [
 NO_OG_IMAGE = False
 
 TITLE_TAGS = [
-    {"tag": "h1", "class": "product-name hidden-sm-down heading-title text-uppercase"},
+    {"tag": "h1", "class": "product-single__title"},
 ]
-NO_OG_TITLE = False
+NO_OG_TITLE = True
 
 DESCRIPTION_TAGS = [
     {"tag": "div", "class": "short-description col-sm-12 value content"},
@@ -27,7 +27,7 @@ DESCRIPTION_TAGS = [
 NO_OG_DESCRIPTION = False
 
 PRICE_TAGS = [
-    {"tag": "p", "class": "price"}
+    {"tag": "span", "class": "product-single__price"}
 ]
 
 # TITLE FETCH BATCH SIZE
@@ -45,20 +45,20 @@ LLM_TEMPERATURE = 0.2
 
 # LLM PROMPT
 # Required
-PRODUCTS_SOLD = "Artículos relacionados con el CBD: flores, aceites, cosmetica, hachis, ..."
-
+PRODUCTS_SOLD = "Ukeleles, guitarras, flautas y accesorios de musica"
 # Not required
 PRODUCT_EXAMPLES = [
-    "OG Kush CBD | La auténtica Flor OG 100% Legal ✅",
-    "Strawberry CBD | Flor de Cáñamo TOP Primera Clase ✅",
-    "【Aceite CBD 30% 】| Treinta Por Ciento al Mejor Precio",
-    "Skywalker CBD OG | Flor Premium Máxima CALIDAD ✅",
-    "Comprar grinder / CALIDAD al mejor PRECIO / De Pata Verde ✅",
-    "Flores CBD Preimum |【Cata 2023 Calidad Máxima】:",
+    "Artemis",
+    "Zeus",
+    "Kunde Moon 26",
+    "Kunde Sun Eclipse 23' EQ",
+    "Boomwhackers Kunde",
+    "Pack Kunde Pluto + Libro 'Ukecole'",
+    "Mercury school - Ukelele para la escuela",
+    "Llibre Ukelele per a mans menudes",
+    "Funda Ukelele Kunde 21' colores variados",
+    "Pack Kunde Mercury + Libro 'Uke'"
 ]
 # Not required
 CATEGORIES_EXAMPLES = [
-    "Flores CBD",
-    "Aceites CBD",
-    "Cosmeticos CBD",
 ]

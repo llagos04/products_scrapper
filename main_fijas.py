@@ -1,9 +1,9 @@
 import asyncio
 import logging
-import crawler
-import fetcher
-import analizer
-import results
+import src.crawler as crawler
+import src.fetcher as fetcher
+import src.analizer as analizer
+import src.results as results
 import time
 from colorama import init, Fore, Style
 from dotenv import load_dotenv
@@ -11,28 +11,17 @@ from CONFIG import ROOT_URL, LLM_BATCH_SIZE, TARGET_PRODUCTS_N, CONCURRENT_REQUE
 import signal
 
 URLS = [
-    "https://depataverde.es/therapy-cbd",
-    "https://depataverde.es/comprar-cogollos-marihuana-online",
-    "https://depataverde.es/strawberry-cbd",
-    "https://depataverde.es/skywalker-og-cbd",
-    "https://depataverde.es/comprar-cogollos-canamo-dpv",
-    "https://depataverde.es/cannatonic-cbg",
-    "https://depataverde.es/biomasa-canamo-kompolti",
-    "https://depataverde.es/aceite-cbd-30-cannactiva",
-    "https://depataverde.es/aceite-cbd-30-dpv",
-    "https://depataverde.es/aceite-cbd-mascotas",
-    "https://depataverde.es/crema-sensible-cbd-formula-swiss",
-    "https://depataverde.es/locion-corporal-cbd-cannactiva",
-    "https://depataverde.es/aceite-cbd-20-cannactiva",
-    "https://depataverde.es/aceite-cbd-10-cannactiva",
-    "https://depataverde.es/aceite-cbd-20-manna",
-    "https://depataverde.es/aceite-ohcbd-5",
-    "",
-    "",
-    "",
-    "",
+    "https://kundebrand.com/collections/accesorios/products/soporte-de-pared",
+    "https://kundebrand.com/collections/ukeleles-escuela/products/libro-ukecole-aprender-ukelele",
+    "https://kundebrand.com/collections/ukeleles-escuela/products/metodo-facil-de-ukelele-vol-2-ukecole",
+    "https://kundebrand.com/collections/mercury/products/pack-ukeleles-escuela-ukecole",
+    "https://kundebrand.com/collections/mercury/products/pack-kunde-mercury-school-21-llibre-amb-el-cor-content-ukelele-escola",
+    "https://kundebrand.com/collections/mercury/products/copia-de-pack-kunde-mercury-school-21-llibre-ukelele-per-a-mans-menudes",
+    "https://kundebrand.com/collections/sun/products/pack-sun",
+    "https://kundebrand.com/collections/moon/products/pack-moon",
+]
 
-    ]
+
 
 load_dotenv()
 init()  # Initialize Colorama

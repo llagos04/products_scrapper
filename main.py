@@ -1,9 +1,9 @@
 import asyncio
 import logging
-import crawler
-import fetcher
-import analizer
-import results
+import src.crawler as crawler
+import src.fetcher as fetcher
+import src.analizer as analizer
+import src.results as results
 import time
 from colorama import init, Fore, Style
 from dotenv import load_dotenv
@@ -146,7 +146,7 @@ async def main():
             processed_urls.update(batch_urls_to_process)
 
             # filter urls
-            batch_urls_to_process = filter_urls(batch_urls_to_process, results_manager)
+            # batch_urls_to_process = filter_urls(batch_urls_to_process, results_manager)
 
             if len(batch_urls) > 5:
                 logging.info(f"Last 5 processed URLs:\n\t\t{"\n\t\t".join(batch_urls[-5:])}\n")
@@ -161,7 +161,7 @@ async def main():
             logging.info(Fore.GREEN + f"Fetched titles for {len(url_titles)} URLs in {elapsed_time_fetch_titles:.2f} seconds\n" + Style.RESET_ALL)
 
             # filter titles
-            url_titles = filter_titles(url_titles, results_manager)
+            # url_titles = filter_titles(url_titles, results_manager)
 
             all_urls_titles = []
             urls_titles_found = [url_title["url"] for url_title in url_titles]
