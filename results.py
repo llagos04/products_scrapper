@@ -70,7 +70,7 @@ class ResultsManager:
 
     def save_to_excel(self):
         """
-        Save the products list to an Excel file, ensuring no duplicates.
+        Save the products list to an Excel file, ensuring no duplicates, and add a 'keywords' column.
         """
         # Rename columns
         df = pd.DataFrame(self.products)
@@ -79,6 +79,9 @@ class ResultsManager:
         # Reorder columns
         df = df[['name', 'description', 'price', 'url', 'image_url']]
 
+        # Add the 'keywords' column with the same content as 'name'
+        df['keywords'] = df['name']
+
         if os.path.exists(self.results_file):
             # Read existing data
             existing_df = pd.read_excel(self.results_file)
@@ -86,10 +89,16 @@ class ResultsManager:
             existing_df.rename(columns={'title': 'name', 'image': 'image_url'}, inplace=True)
             existing_df = existing_df[['name', 'description', 'price', 'url', 'image_url']]
             
+            # Add the 'keywords' column to existing data as well
+            existing_df['keywords'] = existing_df['name']
+
             # Combine new and existing data
             combined_df = pd.concat([existing_df, df], ignore_index=True)
             # Drop duplicates based on 'name'
             combined_df.drop_duplicates(subset=['name'], inplace=True)
+
+            # Sort alphabetically by 'name'
+            combined_df = combined_df.sort_values(by='name')
             
             # Save combined data back to Excel
             combined_df.to_excel(self.results_file, index=False)
@@ -98,6 +107,10 @@ class ResultsManager:
         else:
             # Drop duplicates in current batch based on 'name'
             df.drop_duplicates(subset=['name'], inplace=True)
+
+            # Sort alphabetically by 'name'
+            df = df.sort_values(by='name')
+            
             df.to_excel(self.results_file, index=False)
             self.total_products = len(df)
             self.seen_titles = df['name'].astype(str).tolist()
@@ -111,7 +124,7 @@ class ResultsManager:
         """
         Save the products list to a text file.
         """
-        with open(os.path.join(self.results_folder, 'products.txt'), 'w') as f:
+        with open(os.path.join(self.results_folder, 'products.txt'), 'a') as f:
             for product in self.products:
                 f.write(f"{product['title']}\n")
                 f.write(f"Precio: {product['price']}\n\n")
@@ -126,6 +139,24 @@ class ResultsManager:
         if self.products:
             self.save_to_excel()
             self.save_to_txt()
+
+    def get_processed_urls(self):
+        # load them from the txt file if file doesn't exist return empty list
+        if os.path.exists(os.path.join(self.results_folder, 'processed_urls.txt')):
+            with open(os.path.join(self.results_folder, 'processed_urls.txt'), 'r') as f:
+                processed_urls = [line.strip() for line in f.readlines()]
+            return processed_urls
+        else:
+            return []
+        
+    def get_processed_titles(self):
+        # load them from the txt file if file doesn't exist return empty list
+        if os.path.exists(os.path.join(self.results_folder, 'processed_titles.txt')):
+            with open(os.path.join(self.results_folder, 'processed_titles.txt'), 'r') as f:
+                processed_titles = [line.strip() for line in f.readlines()]
+            return processed_titles
+        else:
+            return []
 
 def get_execution_number(root_url, fixed=False):
     """

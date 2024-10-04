@@ -7,7 +7,7 @@ import results
 import time
 from colorama import init, Fore, Style
 from dotenv import load_dotenv
-from CONFIG import ROOT_URL, LLM_BATCH_SIZE, TARGET_PRODUCTS_N, CONCURRENT_REQUESTS, GENERAL_BATCH_SIZE
+from CONFIG import ROOT_URL, LLM_BATCH_SIZE, TARGET_PRODUCTS_N, CONCURRENT_REQUESTS, GENERAL_BATCH_SIZE, IGNORE_URLS_WITH
 import signal
 
 load_dotenv()
@@ -53,6 +53,37 @@ logging.basicConfig(level=logging.INFO,
 
 logging.getLogger('httpcore').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
+
+def filter_urls(urls, results_manager):
+    # get the set of processed URLs
+    processed_urls = results_manager.get_processed_urls()
+
+    # filter out processed URLs
+    filtered_urls = [url for url in urls if url not in processed_urls]
+
+    # remove duplicates
+    filtered_urls = list(set(filtered_urls))
+
+    # IGNORE_URLS_WITH
+    filtered_urls = [url for url in filtered_urls if not IGNORE_URLS_WITH in url]
+
+    return filtered_urls
+
+def filter_titles(urls_titles, results_manager):
+    # get the set of processed URLs
+    processed_titles = results_manager.get_processed_titles()
+
+    # filter out processed URLs
+    filtered_urls_titles = [url_title for url_title in urls_titles if url_title["title"] not in processed_titles]
+
+    # remove duplicates
+    filtered_urls_titles_copy = filtered_urls_titles.copy()
+    filtered_urls_titles = []
+    for url_title in filtered_urls_titles_copy:
+        if url_title["title"] not in processed_titles:
+            filtered_urls_titles.append(url_title)
+
+    return filtered_urls_titles
 
 async def main():
     """
@@ -114,6 +145,9 @@ async def main():
             # Update processed URLs
             processed_urls.update(batch_urls_to_process)
 
+            # filter urls
+            batch_urls_to_process = filter_urls(batch_urls_to_process, results_manager)
+
             if len(batch_urls) > 5:
                 logging.info(f"Last 5 processed URLs:\n\t\t{"\n\t\t".join(batch_urls[-5:])}\n")
             else:
@@ -125,6 +159,9 @@ async def main():
             url_titles = await fetcher.fetch_titles(batch_urls_to_process, max_concurrent_requests=CONCURRENT_REQUESTS)
             elapsed_time_fetch_titles = time.time() - start_time_fetch_titles
             logging.info(Fore.GREEN + f"Fetched titles for {len(url_titles)} URLs in {elapsed_time_fetch_titles:.2f} seconds\n" + Style.RESET_ALL)
+
+            # filter titles
+            url_titles = filter_titles(url_titles, results_manager)
 
             all_urls_titles = []
             urls_titles_found = [url_title["url"] for url_title in url_titles]

@@ -11,7 +11,27 @@ from CONFIG import ROOT_URL, LLM_BATCH_SIZE, TARGET_PRODUCTS_N, CONCURRENT_REQUE
 import signal
 
 URLS = [
-    "https://www.lacrossandra.com/canelons-sense-gluten/77-513-canelons-tradicionals-de-carn-amb-preparat-per-beixamel-sense-gluten.html#/44-plates_sense_gluten_canelons_tradicionals_de_carn_amb_preparat-3_unitats"
+    "https://depataverde.es/therapy-cbd",
+    "https://depataverde.es/comprar-cogollos-marihuana-online",
+    "https://depataverde.es/strawberry-cbd",
+    "https://depataverde.es/skywalker-og-cbd",
+    "https://depataverde.es/comprar-cogollos-canamo-dpv",
+    "https://depataverde.es/cannatonic-cbg",
+    "https://depataverde.es/biomasa-canamo-kompolti",
+    "https://depataverde.es/aceite-cbd-30-cannactiva",
+    "https://depataverde.es/aceite-cbd-30-dpv",
+    "https://depataverde.es/aceite-cbd-mascotas",
+    "https://depataverde.es/crema-sensible-cbd-formula-swiss",
+    "https://depataverde.es/locion-corporal-cbd-cannactiva",
+    "https://depataverde.es/aceite-cbd-20-cannactiva",
+    "https://depataverde.es/aceite-cbd-10-cannactiva",
+    "https://depataverde.es/aceite-cbd-20-manna",
+    "https://depataverde.es/aceite-ohcbd-5",
+    "",
+    "",
+    "",
+    "",
+
     ]
 
 load_dotenv()

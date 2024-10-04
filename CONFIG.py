@@ -46,11 +46,15 @@ LLM_TEMPERATURE = 0.2
 # LLM PROMPT
 # Required
 PRODUCTS_SOLD = "Artículos relacionados con el CBD: flores, aceites, cosmetica, hachis, ..."
+
 # Not required
 PRODUCT_EXAMPLES = [
-    "Amnesia Haze CBD",
-    "CBD afgano",
-    "Ice Rock CBD"
+    "OG Kush CBD | La auténtica Flor OG 100% Legal ✅",
+    "Strawberry CBD | Flor de Cáñamo TOP Primera Clase ✅",
+    "【Aceite CBD 30% 】| Treinta Por Ciento al Mejor Precio",
+    "Skywalker CBD OG | Flor Premium Máxima CALIDAD ✅",
+    "Comprar grinder / CALIDAD al mejor PRECIO / De Pata Verde ✅",
+    "Flores CBD Preimum |【Cata 2023 Calidad Máxima】:",
 ]
 # Not required
 CATEGORIES_EXAMPLES = [
