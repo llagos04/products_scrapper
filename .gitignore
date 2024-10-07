@@ -19,3 +19,4 @@ results/
 __pycache__
 scraper.log
 .env
+crawler_status

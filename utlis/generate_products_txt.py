@@ -29,6 +29,6 @@ def excel_to_txt(source_path, destination_path):
         f.write(final_output)
 
 # Example usage:
-source_path = '/home/mateodev/workspace/scripts_videos_productos/results/kundebrand.com/execution_8/products.xlsx'
-destination_path = '/home/mateodev/workspace/scripts_videos_productos/results/kundebrand.com/execution_8/products.txt'
+source_path = '/home/mateodev/workspace/scripts_videos_productos/results/pompasyregalos.com/execution_11/products_cleaned.xlsx'
+destination_path = '/home/mateodev/workspace/scripts_videos_productos/results/pompasyregalos.com/execution_11/products_cleaned.txt'
 excel_to_txt(source_path, destination_path)

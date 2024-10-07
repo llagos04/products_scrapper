@@ -7,7 +7,7 @@ from urllib.parse import urlparse, urljoin
 from playwright.async_api import async_playwright
 import logging
 from urllib.parse import urlparse, urljoin
-from CONFIG import IGNORE_URLS_WITH, USE_RATE_LIMIT
+from CONFIG import IGNORE_URLS_WITH, USE_RATE_LIMIT, REQUEST_TIMEOUT
 
 def is_same_domain(domain, url):
     return urlparse(domain).netloc == urlparse(url).netloc
@@ -175,14 +175,14 @@ class Crawler:
 
                                 page = await context.new_page()
 
-                                # Block unnecessary resources to speed up loading
-                                async def block_unnecessary_resources(route, request):
-                                    if request.resource_type in ['document', 'xhr', 'fetch']:
-                                        await route.continue_()
-                                    else:
-                                        await route.abort()
+                                # # Block unnecessary resources to speed up loading
+                                # async def block_unnecessary_resources(route, request):
+                                #     if request.resource_type in ['image', 'media', 'font']:
+                                #         await route.continue_()
+                                #     else:
+                                #         await route.abort()
 
-                                await page.route("**/*", block_unnecessary_resources)
+                                # await page.route("**/*", block_unnecessary_resources)
 
                                 # Set a reduced timeout
                                 response = await page.goto(current_url, timeout=10000)  # 10 seconds timeout
@@ -210,7 +210,7 @@ class Crawler:
                                     break  # Don't retry other status codes
 
                                 # Wait for the page to load necessary content
-                                await page.wait_for_selector("a", timeout=5000)  # Wait max 5 seconds
+                                await page.wait_for_selector("a", state='attached', timeout=REQUEST_TIMEOUT*1000)
 
                                 # Extract all links from the page
                                 links = await page.query_selector_all("a")

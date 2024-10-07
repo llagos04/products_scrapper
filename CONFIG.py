@@ -1,9 +1,9 @@
 # EXECUTION PARAMETERS
-ROOT_URL = "https://kundebrand.com/"
+ROOT_URL = "https://pompasyregalos.com/"
 #ROOT_URL = "https://sismalaser.es"
 #ROOT_URL = "https://worldshishas.com/"
-TARGET_PRODUCTS_N = 1000
-GENERAL_BATCH_SIZE = 50
+TARGET_PRODUCTS_N = 10000
+GENERAL_BATCH_SIZE = 10
 
 USE_RATE_LIMIT=False
 
@@ -17,9 +17,9 @@ IMAGE_CLASSES = [
 NO_OG_IMAGE = False
 
 TITLE_TAGS = [
-    {"tag": "h1", "class": "product-single__title"},
+    {"tag": "h1", "class": "h1 page-title"},
 ]
-NO_OG_TITLE = True
+NO_OG_TITLE = False
 
 DESCRIPTION_TAGS = [
     {"tag": "div", "class": "short-description col-sm-12 value content"},
@@ -27,17 +27,17 @@ DESCRIPTION_TAGS = [
 NO_OG_DESCRIPTION = False
 
 PRICE_TAGS = [
-    {"tag": "span", "class": "product-single__price"}
-]
+            {"tag": "p", "class": "price"}
+            ]
 
 # TITLE FETCH BATCH SIZE
 CONCURRENT_REQUESTS = 10
 
 # REQUEST TIMEOUT
-REQUEST_TIMEOUT = 15
+REQUEST_TIMEOUT = 20
 
 # LLM BATCH SIZE
-LLM_BATCH_SIZE = 20
+LLM_BATCH_SIZE = 30
 
 # LLM MODEL
 LLM_MODEL = "gpt-4o-mini"
@@ -45,20 +45,13 @@ LLM_TEMPERATURE = 0.2
 
 # LLM PROMPT
 # Required
-PRODUCTS_SOLD = "Ukeleles, guitarras, flautas y accesorios de musica"
+PRODUCTS_SOLD = "Venden artículos de ropa sobretodo, jerseys, camisas, pantalones, faldas, bisuteria,... Tambien tienen artículos de decoracion como candelabros, centros de mesa, espejos, alfombras, iluminacion, ..."
 # Not required
 PRODUCT_EXAMPLES = [
-    "Artemis",
-    "Zeus",
-    "Kunde Moon 26",
-    "Kunde Sun Eclipse 23' EQ",
-    "Boomwhackers Kunde",
-    "Pack Kunde Pluto + Libro 'Ukecole'",
-    "Mercury school - Ukelele para la escuela",
-    "Llibre Ukelele per a mans menudes",
-    "Funda Ukelele Kunde 21' colores variados",
-    "Pack Kunde Mercury + Libro 'Uke'"
 ]
 # Not required
 CATEGORIES_EXAMPLES = [
-]
+    "TEXTIL HOGAR archivos - Pompas y Regalos",
+    "Ambientador Pulverizador archivos - Pompas y Regalos",
+    "Velas archivos - Pompas y Regalos",
+    ]
