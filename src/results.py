@@ -57,15 +57,17 @@ class ResultsManager:
     
     def save_urls_to_txt(self, batch_processed_urls_titles):
         """
-        Save the processed URLs to a text file.
+        Save the processed URLs to a text file using UTF-8 encoding.
         """
-        with open(os.path.join(self.results_folder, 'processed_urls.txt'), 'a') as f:
+        # Guardar las URLs procesadas
+        with open(os.path.join(self.results_folder, 'processed_urls.txt'), 'a', encoding='utf-8') as f:
             for url_title in batch_processed_urls_titles:
-                f.write(f"{url_title["title"]}: {url_title['url']}\n")
+                f.write(f"{url_title['title']}: {url_title['url']}\n")
 
-        with open(os.path.join(self.results_folder, 'processed_titles.txt'), 'a') as f:
+        # Guardar los títulos procesados
+        with open(os.path.join(self.results_folder, 'processed_titles.txt'), 'a', encoding='utf-8') as f:
             for url_title in batch_processed_urls_titles:
-                if url_title["title"] != "Title not found":
+                if url_title['title'] != "Title not found":
                     f.write(f"{url_title['title']}\n")
 
     def save_to_excel(self):
@@ -124,13 +126,13 @@ class ResultsManager:
         """
         Save the products list to a text file.
         """
-        with open(os.path.join(self.results_folder, 'products.txt'), 'a') as f:
+        with open(os.path.join(self.results_folder, 'products.txt'), 'a', encoding='utf-8') as f:
             for product in self.products:
                 f.write(f"{product['title']}\n")
                 f.write(f"Precio: {product['price']}\n\n")
                 f.write(f"{product['description']}\n\n")
                 f.write(f"Información extraída de [{product['title']}]({product['url']})\n\n")
-                f.write("-------\n\n")
+                f.write("\n-------\n\n")
 
     def save_results(self):
         """

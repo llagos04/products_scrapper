@@ -43,6 +43,17 @@ for handler in logging.root.handlers:
 logging.getLogger('httpcore').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
+# Configure logging for both file and console output
+logging.basicConfig(level=logging.INFO,
+                    format='%(levelname)s -\t%(message)s',
+                    handlers=[
+                        logging.FileHandler('scraper.log', mode='w'),
+                        logging.StreamHandler()
+                    ])
+
+logging.getLogger('httpcore').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)
+
 def filter_urls(urls, results_manager):
     # get the set of processed URLs
     processed_urls = results_manager.get_processed_urls()
@@ -74,22 +85,6 @@ def filter_titles(urls_titles, results_manager):
 
     return filtered_urls_titles
 
-def manual_sitemap_selection(sitemap, urls):
-    """
-    Presenta el sitemap al usuario para que decida si contiene productos.
-    Si responde que sí, se seleccionan todas las URLs; si no, se descartan.
-    """
-    print(f"\nEste sitemap contiene los siguientes URLs:")
-    print(sitemap)
-    for url in urls:
-        print(f"  ├── {url}")
-    
-    user_input = input("\n¿Este sitemap contiene productos? (Sí/No): ").strip().lower()
-    if user_input in ['sí', 'si', 's']:
-        return urls  # Si elige "sí", se devuelven todas las URLs
-    else:
-        return []  # Si elige "no", se descartan todas las URLs
-
 async def main():
     """
     Main function to orchestrate the web scraping process.
@@ -100,16 +95,16 @@ async def main():
         # Check if the domain is JavaScript-driven
         logging.info(f"Checking if {ROOT_URL} is JavaScript-driven...")
         is_javascript_driven = await crawler.is_javascript_driven_async(ROOT_URL)
-        is_javascript_driven = True  # Forcing JavaScript-driven for now
+        is_javascript_driven = True
         logging.info(f"{ROOT_URL} is {'not ' if not is_javascript_driven else ''}JavaScript-driven.")
-        
+
         # Initialize variables
         total_products_found = 0
         iterations = 0
         processed_urls = set()
         start_time = time.time()
 
-        # Import links to ignore from ignore_links.txt
+        # import links to ignore from ignore_links.txt
         with open('ignore_links.txt', 'r') as f:
             ignore_links = [line.strip() for line in f.readlines()]
 
@@ -127,61 +122,21 @@ async def main():
             exit(0)
         signal.signal(signal.SIGINT, signal_handler)
 
-        # Fetch all URLs (from sitemap or crawling)
-        logging.info(f"Fetching all URLs from {ROOT_URL}...")
-        all_sitemaps = await crawler_instance.get_all_urls()
-
-        selected_urls = []
-        
-        # Recorrer la lista de sitemaps y sus URLs asociadas
-        for sitemap_data in all_sitemaps:
-            sitemap, urls = sitemap_data['sitemap'], sitemap_data['urls']
-            urls_from_sitemap = manual_sitemap_selection(sitemap, urls)
-            selected_urls.extend(urls_from_sitemap)
-
-        # LOG adicional: mostrar todas las URLs seleccionadas
-        logging.info(f"Selected {len(selected_urls)} URLs after manual sitemap filtering.")
-        
-        # If there are no manually selected URLs, proceed with crawling or LLM analysis
-        if not selected_urls:
-            logging.info("No URLs selected manually. Proceeding with crawling or LLM-based filtering...")
-            # Perform crawling (if not already done) or use LLM for product selection
-
-            # If we have no sitemaps or filtered URLs, we'll use the crawling method and the LLM
-            crawling_urls = await crawler_instance.get_all_urls_by_crawling()
-            logging.info(f"Found {len(crawling_urls)} URLs via crawling.")
-
-            if crawling_urls:
-                logging.info(f"Using LLM to filter product URLs from {len(crawling_urls)} crawled URLs...")
-                url_titles = await fetcher.fetch_titles(crawling_urls, max_concurrent_requests=CONCURRENT_REQUESTS)
-
-                # Use LLM to identify product URLs
-                product_urls_titles = await analizer.select_product_urls(url_titles, LLM_BATCH_SIZE)
-                selected_urls = [url_title['url'] for url_title in product_urls_titles]
-                logging.info(f"LLM identified {len(selected_urls)} product URLs.")
-            else:
-                logging.info("No URLs found through crawling or sitemap.")
-                return
-
-        # Variables to keep track of counts
-        total_products_found = 0
-        total_without_stock = 0
-        total_discarded = 0
-        total_urls_processed = 0
-        total_urls_to_process = len(selected_urls)
-
-        # Process the URLs in batches
-        while total_products_found < TARGET_PRODUCTS_N and selected_urls:
+        while total_products_found < TARGET_PRODUCTS_N:
             start_iteration_time = time.time()
             iterations += 1
+            logging.info("")
+            logging.info("")
             logging.info(Fore.GREEN + Style.BRIGHT + f"############### START ITERATION {iterations} ###############\n" + Style.RESET_ALL)
-            
-            # Get the next batch of URLs
-            batch_urls = selected_urls[:GENERAL_BATCH_SIZE]
-            selected_urls = selected_urls[GENERAL_BATCH_SIZE:]  # Remove processed URLs from the list
+            # Fetch a batch of URLs
+            logging.info(f"Fetching a batch of {GENERAL_BATCH_SIZE} URLs from {ROOT_URL}...")
+            start_batch_time = time.time()
+            batch_urls = await crawler_instance.get_next_batch_urls(GENERAL_BATCH_SIZE)
+            elapsed_batch_time = time.time() - start_batch_time
+            logging.info(Fore.GREEN + f"Crawled {len(batch_urls)} URLs in {elapsed_batch_time:.2f} seconds + Style.RESET_ALL")
 
-            logging.info(f"Processing batch of {len(batch_urls)} URLs...")
             if not batch_urls:
+                logging.info("")
                 logging.info("No more URLs to process.")
                 break
 
@@ -189,6 +144,9 @@ async def main():
             batch_urls_to_process = [url for url in batch_urls if url not in processed_urls]
             # Update processed URLs
             processed_urls.update(batch_urls_to_process)
+
+            # filter urls
+            # batch_urls_to_process = filter_urls(batch_urls_to_process, results_manager)
 
             if len(batch_urls) > 5:
                 logging.info(f"Last 5 processed URLs:\n\t\t{"\n\t\t".join(batch_urls[-5:])}\n")
@@ -201,6 +159,9 @@ async def main():
             url_titles = await fetcher.fetch_titles(batch_urls_to_process, max_concurrent_requests=CONCURRENT_REQUESTS)
             elapsed_time_fetch_titles = time.time() - start_time_fetch_titles
             logging.info(Fore.GREEN + f"Fetched titles for {len(url_titles)} URLs in {elapsed_time_fetch_titles:.2f} seconds\n" + Style.RESET_ALL)
+
+            # filter titles
+            # url_titles = filter_titles(url_titles, results_manager)
 
             all_urls_titles = []
             urls_titles_found = [url_title["url"] for url_title in url_titles]
@@ -215,13 +176,25 @@ async def main():
             else:
                 logging.info(f"Fetched titles:\n\t\t{"\n\t\t".join([url_title["title"] for url_title in url_titles])}\n")
 
-            # Ahora pasamos la lista de diccionarios con 'url' y 'title' a fetch_product_details
-            logging.info(f"Fetching product details for {len(all_urls_titles)} product URLs...")
+            # discard existing titles
+            url_titles = [title for title in url_titles if title not in results_manager.seen_titles]
+
+            # Select Product URLs
+            logging.info(f"Selecting product URLs from {len(url_titles)} URLs...")
+            start_time_select_products = time.time()
+            product_urls_titles = await analizer.select_product_urls(url_titles, LLM_BATCH_SIZE)
+            elapsed_time_select_products = time.time() - start_time_select_products
+            logging.info(Fore.GREEN + f"Selected {len(product_urls_titles)} product URLs in {elapsed_time_select_products:.2f} seconds\n" + Style.RESET_ALL)
+            
+            if len(product_urls_titles) > 5:
+                logging.info(f"Last 5 selected product URLs:\n\t\t{"\n\t\t".join([url_title["title"] for url_title in product_urls_titles[-5:]])}\n")
+            else:
+                logging.info(f"Selected product URLs:\n\t\t{"\n\t\t".join([url_title["title"] for url_title in product_urls_titles])}\n")
+
+            # Fetch Product Details
+            logging.info(f"Fetching product details for {len(product_urls_titles)} product URLs...")
             start_time_fetch_details = time.time()
-            
-            # Asegúrate de pasar la lista de diccionarios a fetch_product_details
-            product_details = await fetcher.fetch_product_details(all_urls_titles, max_concurrent_requests=CONCURRENT_REQUESTS)
-            
+            product_details = await fetcher.fetch_product_details(product_urls_titles, max_concurrent_requests=CONCURRENT_REQUESTS)
             elapsed_time_fetch_details = time.time() - start_time_fetch_details
             logging.info(Fore.GREEN + f"Fetched {len(product_details)} product details in {elapsed_time_fetch_details:.2f} seconds\n" + Style.RESET_ALL)
 
@@ -243,20 +216,15 @@ async def main():
             if total_products_found >= TARGET_PRODUCTS_N:
                 logging.info(f"Target number of products ({TARGET_PRODUCTS_N}) reached.")
                 break
-            if total_urls_processed >= total_urls_to_process:
-                logging.info(f"Target maximum number of products ({total_urls_to_process}) reached.")
-                break
 
         # Final save
         results_manager.save_results()
 
         total_elapsed_time = time.time() - start_time
         logging.info(Fore.GREEN + Style.BRIGHT + f"Completed web scraping process in {total_elapsed_time:.2f} seconds")
-    
+
     except Exception as e:
         logging.exception(f"An error occurred during the web scraping process: {e}")
-
-
 
 if __name__ == '__main__':
     asyncio.run(main())

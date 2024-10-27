@@ -3,7 +3,7 @@ import logging
 import time
 from bs4 import BeautifulSoup
 import aiohttp
-from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, NO_OG_IMAGE, NO_OG_DESCRIPTION, NO_OG_TITLE, REQUEST_TIMEOUT
+from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, LOWER_PRICE, CHECK_STOCK, STOCK_TAGS, STOCK_TEXT, NO_OG_IMAGE, NO_OG_DESCRIPTION, NO_OG_TITLE, REQUEST_TIMEOUT
 import re
 
 
@@ -117,10 +117,10 @@ async def fetch_titles(urls, max_concurrent_requests=10):
 
 def fetch_product_details_from_soup(soup):
     """
-    Fetch product details from BeautifulSoup object.
+    Fetch product details from BeautifulSoup object and check for stock if needed.
 
     :param soup: BeautifulSoup object.
-    :return: A dictionary with 'image', 'description', and 'price'.
+    :return: A dictionary with 'image', 'description', 'price', and 'in_stock'.
     """
 
     # Extract image URL
@@ -178,10 +178,20 @@ def fetch_product_details_from_soup(soup):
         except ValueError:
             pass
 
+    # Check stock availability
+    in_stock = True
+    if CHECK_STOCK:
+        for stock_tag in STOCK_TAGS:
+            tag = soup.find(stock_tag["tag"], class_=stock_tag["class"])
+            if tag and STOCK_TEXT.lower() in tag.get_text().lower():
+                in_stock = False
+                break
+
     return {
         "image": image,
         "description": description,
-        "price": price
+        "price": price,
+        "in_stock": in_stock
     }
 
 async def fetch_details(session, url, title, semaphore):
@@ -192,7 +202,7 @@ async def fetch_details(session, url, title, semaphore):
     :param url: The URL to fetch.
     :param title: The title of the product.
     :param semaphore: Semaphore to limit concurrent requests.
-    :return: A dictionary with 'url', 'title', and 'details'.
+    :return: A dictionary with 'url', 'title', and 'details' or None if out of stock.
     """
     async with semaphore:
         try:
@@ -218,7 +228,12 @@ async def fetch_details(session, url, title, semaphore):
 
                 details = fetch_product_details_from_soup(soup)
 
-                #logging.info(f"Fetched details for {url}: {details}")
+                # If product is out of stock, save it in a separate file and skip
+                if CHECK_STOCK and not details["in_stock"]:
+                    logging.info(f"Product {url} is out of stock.")
+                    with open('products_without_stock.txt', 'a', encoding='utf-8') as f:
+                        f.write(f"{title}\nURL: {url}\nPrice: {details['price']}\n\n")
+                    return None  # Do not return product details if out of stock
 
                 return {
                     "url": url,
@@ -247,11 +262,17 @@ async def fetch_product_details(urls_titles, max_concurrent_requests=10):
         tasks = []
         for url_titles in urls_titles:
             tasks.append(fetch_details(session, url_titles["url"], url_titles["title"], semaphore))
+        
+        # Gather all tasks
         results = await asyncio.gather(*tasks)
 
-        logging.info(f"Found {len(results)} product details")
+        # Filter out any None results (products without price)
+        valid_results = [result for result in results if result is not None]
 
-    return results
+        logging.info(f"Found {len(valid_results)} products with valid prices")
+
+    return valid_results
+
 
 
 if __name__ == "__main__":

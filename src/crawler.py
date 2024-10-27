@@ -9,6 +9,65 @@ import logging
 from urllib.parse import urlparse, urljoin
 from CONFIG import IGNORE_URLS_WITH, USE_RATE_LIMIT, REQUEST_TIMEOUT
 
+from xml.etree import ElementTree as ET
+
+# Función para extraer URLs desde un sitemap
+async def get_urls_from_sitemap(domain):
+    """
+    Intenta obtener URLs desde el sitemap del dominio.
+    Primero busca el sitemap en /sitemap.xml o lo detecta desde el robots.txt.
+    """
+    possible_sitemap_urls = [
+        urljoin(domain, '/sitemap.xml'),
+        urljoin(domain, '/robots.txt')
+    ]
+    
+    async with aiohttp.ClientSession(headers={'User-Agent': 'YourCrawler/1.0'}) as session:
+        for sitemap_url in possible_sitemap_urls:
+            try:
+                async with session.get(sitemap_url, timeout=10) as response:
+                    if response.status == 200:
+                        content_type = response.headers.get('Content-Type', '')
+                        if 'xml' in content_type:
+                            # Si el contenido es XML, intentamos parsearlo como sitemap directamente
+                            sitemap_content = await response.text()
+                            return parse_sitemap_xml(sitemap_content)
+                        elif 'text/plain' in content_type and 'robots.txt' in sitemap_url:
+                            # Si es un robots.txt, buscamos la línea con el sitemap
+                            robots_content = await response.text()
+                            sitemap_url = extract_sitemap_from_robots(robots_content)
+                            if sitemap_url:
+                                # Intentamos obtener las URLs desde el sitemap indicado en robots.txt
+                                return await get_urls_from_sitemap(sitemap_url)
+            except Exception as e:
+                logging.warning(f"Error al obtener el sitemap desde {sitemap_url}: {e}")
+
+    # Si no se encuentra un sitemap válido, retornamos una lista vacía
+    return []
+
+# Función para parsear el contenido XML del sitemap
+def parse_sitemap_xml(sitemap_content):
+    """
+    Parsea el contenido XML del sitemap y extrae las URLs.
+    """
+    try:
+        root = ET.fromstring(sitemap_content)
+        urls = [url_elem.text for url_elem in root.findall(".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc")]
+        return urls
+    except ET.ParseError as e:
+        logging.error(f"Error al parsear el sitemap: {e}")
+        return []
+
+# Función para extraer el sitemap de un robots.txt
+def extract_sitemap_from_robots(robots_content):
+    """
+    Busca en el robots.txt la línea que indica la ubicación del sitemap.
+    """
+    for line in robots_content.splitlines():
+        if line.lower().startswith("sitemap:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
 def is_same_domain(domain, url):
     return urlparse(domain).netloc == urlparse(url).netloc
 
@@ -46,22 +105,102 @@ class Crawler:
         self.rate_limit = 1  # Max requests per second
         self.concurrent_requests = 5  # Max concurrent requests
         self.lock = asyncio.Lock()
+        self.sitemap_checked = False  # Para evitar intentar obtener el sitemap más de una vez
 
-    async def get_next_batch_urls(self, batch_size):
-        if self.is_javascript_driven:
-            return await self.get_next_batch_urls_pyw(batch_size)
-        else:
-            return await self.get_next_batch_urls_bfs(batch_size)
+    async def get_all_urls(self):
+        """
+        Obtiene todas las URLs del sitemap, si está disponible, o usa el crawling regular si no hay sitemap.
+        Este método maneja sitemaps recursivos y devuelve todos los sitemaps y URLs.
+        """
+        all_sitemaps = []
+        if not self.sitemap_checked:
+            self.sitemap_checked = True  # Solo intentamos obtener el sitemap una vez
+            logging.info(f"Checking for sitemap at {self.domain}...")
 
-    async def get_next_batch_urls_bfs(self, batch_size):
-        batch_urls = []
+            # Obtener las URLs del sitemap
+            sitemap_data = await self.get_urls_from_sitemap_recursive(self.domain + '/sitemap.xml')
+
+            if sitemap_data:
+                logging.info(f"Found {len(sitemap_data)} URLs after processing all sitemaps.")
+                return sitemap_data
+            else:
+                logging.info("No URLs found in sitemap.")
+                return []
+
+        # Si no hay sitemap, seguimos con el crawling tradicional
+        logging.info(f"No sitemap found, proceeding with crawling...")
+        urls_from_crawling = await self.get_all_urls_by_crawling()
+
+        logging.info(f"Found {len(urls_from_crawling)} URLs from crawling.")
+        return [{'sitemap': 'Crawling', 'urls': urls_from_crawling}]
+
+   
+    async def get_urls_from_sitemap_recursive(self, sitemap_url):
+        """
+        Procesa un sitemap de forma recursiva para extraer URLs. Si un sitemap contiene otros sitemaps,
+        sigue procesando hasta que encuentre URLs finales.
+        """
+        try:
+            logging.info(f"Fetching sitemap: {sitemap_url}")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(sitemap_url, timeout=10) as response:
+                    if response.status == 200:
+                        content = await response.text()
+
+                        # Parsear el contenido XML del sitemap
+                        root = ET.fromstring(content)
+                        ns = {'sitemap': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
+
+                        all_sitemaps = []
+
+                        # Si el sitemap contiene otros sitemaps, procesarlos recursivamente
+                        for sitemap in root.findall('sitemap:sitemap', ns):
+                            loc = sitemap.find('sitemap:loc', ns).text
+                            logging.info(f"Found secondary sitemap: {loc}")
+                            secondary_sitemaps = await self.get_urls_from_sitemap_recursive(loc)
+                            all_sitemaps.extend(secondary_sitemaps)
+
+                        # Si el sitemap contiene URLs finales, extraerlas
+                        urls = []
+                        for url in root.findall('sitemap:url/sitemap:loc', ns):
+                            loc = url.text
+                            urls.append(loc)
+
+                        # Guardar el sitemap y sus URLs
+                        if urls:
+                            all_sitemaps.append({
+                                'sitemap': sitemap_url,
+                                'urls': urls
+                            })
+
+                        return all_sitemaps
+                    else:
+                        logging.error(f"Failed to fetch sitemap: {sitemap_url}, Status Code: {response.status}")
+                        return []
+        except Exception as e:
+            logging.error(f"Error fetching sitemap {sitemap_url}: {e}")
+            return []
+
+        
+    def is_html_page(self, url):
+        """
+        Verifica si una URL apunta a una página HTML basándose en la extensión del archivo.
+        """
+        non_html_extensions = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.mp4', '.mp3']
+        return not any(url.lower().endswith(ext) for ext in non_html_extensions)
+
+    async def get_all_urls_by_crawling(self):
+        """
+        Obtiene todas las URLs usando el método de crawling tradicional, recorriendo páginas.
+        """
+        all_urls = []
         semaphore = asyncio.Semaphore(self.concurrent_requests)
 
         async with aiohttp.ClientSession(headers={'User-Agent': 'YourCrawler/1.0'}) as session:
             tasks = []
-            while self.urls_to_visit and len(batch_urls) < batch_size:
+            while self.urls_to_visit:
                 current_url = self.urls_to_visit.pop(0)
-                tasks.append(self.process_url(session, current_url, batch_urls, semaphore))
+                tasks.append(self.process_url(session, current_url, all_urls, semaphore))
 
                 if len(tasks) >= self.concurrent_requests:
                     await asyncio.gather(*tasks)
@@ -70,9 +209,12 @@ class Crawler:
             if tasks:
                 await asyncio.gather(*tasks)
 
-        return batch_urls
+        return all_urls  # Devolver todas las URLs obtenidas por crawling
 
-    async def process_url(self, session, current_url, batch_urls, semaphore):
+    async def process_url(self, session, current_url, all_urls, semaphore):
+        """
+        Procesa una URL individual, obteniendo sus enlaces si es HTML y no ha sido visitada.
+        """
         async with semaphore:
             parsed_url = urlparse(current_url)
             normalized_url = parsed_url._replace(fragment='').geturl()
@@ -111,8 +253,8 @@ class Crawler:
                                     full_url = urlparse(full_url)._replace(fragment='').geturl()
                                     if is_same_domain(self.domain, full_url) and full_url not in self.visited and full_url not in self.ignore_links:
                                         self.urls_to_visit.append(full_url)
-                                # After processing the current URL, add it to batch_urls
-                                batch_urls.append(current_url)
+                                # Añadir la URL actual procesada
+                                all_urls.append(current_url)
                                 break  # Exit retry loop on success
                             elif response.status == 429:
                                 if self.use_rate_limit:

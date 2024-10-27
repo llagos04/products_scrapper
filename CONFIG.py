@@ -1,5 +1,5 @@
 # EXECUTION PARAMETERS
-ROOT_URL = "https://pompasyregalos.com/"
+ROOT_URL = "https://worldshishas.com/"
 #ROOT_URL = "https://sismalaser.es"
 #ROOT_URL = "https://worldshishas.com/"
 TARGET_PRODUCTS_N = 10000
@@ -26,9 +26,18 @@ DESCRIPTION_TAGS = [
 ]
 NO_OG_DESCRIPTION = False
 
+# Price config
 PRICE_TAGS = [
             {"tag": "p", "class": "price"}
             ]
+LOWER_PRICE = True
+
+# No stock
+CHECK_STOCK = True
+STOCK_TAGS = [
+    {"tag": "p", "class": "stock"}
+]
+STOCK_TEXT = "Sin stock"
 
 # TITLE FETCH BATCH SIZE
 CONCURRENT_REQUESTS = 10
