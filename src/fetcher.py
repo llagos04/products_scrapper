@@ -111,9 +111,21 @@ async def fetch_titles(urls, max_concurrent_requests=10):
                     'title': result['title']
                 })
 
-    logging.info(f"Found {len(filtered_results)} unique titles")
-
     return filtered_results
+
+def extract_prices(text):
+    """
+    Extrae todos los precios del texto, devolviendo una lista de precios numéricos.
+    """
+    prices = re.findall(r'(\d+[\.,]?\d*)\s*€', text)
+    return [float(p.replace(",", ".")) for p in prices]  # Convertir a float y usar punto como separador decimal
+
+
+def format_price(price_value):
+    """
+    Da formato al precio para que tenga el formato '0,00€'.
+    """
+    return f"{price_value:.2f}".replace('.', ',') + "€"  # Reemplaza el punto por coma y añade el símbolo €
 
 def fetch_product_details_from_soup(soup):
     """
@@ -157,26 +169,23 @@ def fetch_product_details_from_soup(soup):
         else:
             description = "Description not found"
 
-    # Extract price
-    price = None
+    # Extract prices
+    price_list = []
     for price_tag in PRICE_TAGS:
         tag = soup.find(price_tag["tag"], class_=price_tag["class"])
         if tag:
-            price = tag.get_text().strip()
-            if price:
-                break
-    else:
-        price = "Price not found"
+            price_text = tag.get_text().strip()
+            prices = extract_prices(price_text)
+            price_list.extend(prices)
 
-    if price != "Price not found":
-        # Format price
-        formatted_price = price.replace("€", "").replace(",", ".").strip()
-        try:
-            price_value = float(formatted_price)
-            formatted_price = f"{price_value:.2f}€"
-            price = formatted_price
-        except ValueError:
-            pass
+    if not price_list:
+        price = "Price not found"
+    else:
+        # Choose the lowest price if LOWER_PRICE is True
+        if LOWER_PRICE:
+            price = format_price(min(price_list))
+        else:
+            price = format_price(price_list[0])  # Use the first found price if not selecting the lowest
 
     # Check stock availability
     in_stock = True
@@ -195,85 +204,76 @@ def fetch_product_details_from_soup(soup):
     }
 
 async def fetch_details(session, url, title, semaphore):
-    """
-    Asynchronously fetch product details for a URL.
-
-    :param session: The aiohttp client session.
-    :param url: The URL to fetch.
-    :param title: The title of the product.
-    :param semaphore: Semaphore to limit concurrent requests.
-    :return: A dictionary with 'url', 'title', and 'details' or None if out of stock.
-    """
     async with semaphore:
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                              'AppleWebKit/537.36 (KHTML, like Gecko) '
-                              'Chrome/85.0.4183.83 Safari/537.36',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Connection': 'keep-alive'
+                # Your headers here
             }
-            timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)  # Total timeout of 5 seconds
+            timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
 
             async with session.get(url, timeout=timeout, headers=headers) as response:
                 if response.status != 200:
-                    logging.error(f"Failed to fetch {url}, status code: {response.status}")
-                    return None
+                                        # Include the URL in discarded products
+                    return ('discarded', {'url': url, 'title': title})
 
                 content = await response.text()
-
-                # Parse the HTML content efficiently
                 soup = BeautifulSoup(content, 'lxml')
-
                 details = fetch_product_details_from_soup(soup)
 
-                # If product is out of stock, save it in a separate file and skip
-                if CHECK_STOCK and not details["in_stock"]:
-                    logging.info(f"Product {url} is out of stock.")
-                    with open('products_without_stock.txt', 'a', encoding='utf-8') as f:
-                        f.write(f"{title}\nURL: {url}\nPrice: {details['price']}\n\n")
-                    return None  # Do not return product details if out of stock
+                # If no price is found, discard
+                if details["price"] == "Price not found":
+                    return ('discarded', {'url': url, 'title': title})
 
-                return {
+                # If product is out of stock
+                if CHECK_STOCK and not details["in_stock"]:
+                    return ('without_stock', {
+                        "url": url,
+                        "title": title,
+                        "image": details["image"],
+                        "description": details["description"],
+                        "price": details["price"],
+                        "in_stock": details["in_stock"]
+                    })
+
+                # Product is in stock and has price
+                return ('in_stock', {
                     "url": url,
                     "title": title,
                     "image": details["image"],
                     "description": details["description"],
-                    "price": details["price"]
-                }
+                    "price": details["price"],
+                    "in_stock": details["in_stock"]
+                })
 
         except Exception as e:
             logging.error(f"Error fetching details for {url}: {e}")
-            return None
+            # Include the URL in discarded products
+            return ('discarded', {'url': url, 'title': title})
 
 async def fetch_product_details(urls_titles, max_concurrent_requests=10):
-    """
-    Asynchronously fetch product details for a list of URLs.
-
-    :param urls_titles: List of dictionaries with 'url' and 'title'.
-    :param max_concurrent_requests: Maximum number of concurrent requests.
-    :return: List of dictionaries with 'url', 'title', and 'details'.
-    """
     semaphore = asyncio.Semaphore(max_concurrent_requests)
     connector = aiohttp.TCPConnector(limit_per_host=max_concurrent_requests)
 
+    in_stock_products = []
+    without_stock_products = []
+    discarded_products = []
+
     async with aiohttp.ClientSession(connector=connector) as session:
-        tasks = []
-        for url_titles in urls_titles:
-            tasks.append(fetch_details(session, url_titles["url"], url_titles["title"], semaphore))
-        
-        # Gather all tasks
+        tasks = [fetch_details(session, url_title["url"], url_title["title"], semaphore) for url_title in urls_titles]
         results = await asyncio.gather(*tasks)
 
-        # Filter out any None results (products without price)
-        valid_results = [result for result in results if result is not None]
+    for status, data in results:
+        if status == 'in_stock':
+            in_stock_products.append(data)
+        elif status == 'without_stock':
+            without_stock_products.append(data)
+        elif status == 'discarded':
+            discarded_products.append(data)
+        else:
+            # Handle errors or other statuses if needed
+            pass
 
-        logging.info(f"Found {len(valid_results)} products with valid prices")
-
-    return valid_results
-
-
+    return in_stock_products, without_stock_products, discarded_products
 
 if __name__ == "__main__":
     # Sample URL to test the function
