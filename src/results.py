@@ -85,7 +85,8 @@ class ResultsManager:
         self.discarded_products.append(discarded_entry)
         self.total_discarded_products += 1
         with open(self.discarded_file, 'a', encoding='utf-8') as f:
-            f.write(f"Producto Descartado: {product_title}\nURL: {url}\n\n")
+            # f.write(f"Producto Descartado: {product_title}\nURL: {url}\n\n")
+            f.write(f"{url}\n")
 
     def save_urls_to_txt(self, batch_processed_urls_titles):
         """
@@ -162,7 +163,8 @@ class ResultsManager:
         discarded_file = os.path.join(self.results_folder, 'discarded_products.txt')
         with open(discarded_file, 'w', encoding='utf-8') as f:
             for product in self.discarded_products:
-                f.write(f"Producto Descartado: {product['title']}\nURL: {product['url']}\n\n")
+                # f.write(f"Producto Descartado: {product_title}\nURL: {url}\n\n")
+                f.write(f"{product['url']}\n")
 
 
     def save_results(self):

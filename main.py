@@ -74,6 +74,8 @@ def filter_titles(urls_titles, results_manager):
 
     return filtered_urls_titles
 
+
+
 def manual_sitemap_selection(sitemap, urls):
     """
     Presenta el sitemap al usuario para que decida si contiene productos.
@@ -228,7 +230,7 @@ async def main():
             logging.info(Fore.GREEN + Style.BRIGHT + f"Completed iteration {iterations} in {elapsed_iteration_time:.2f} seconds" + Style.RESET_ALL)
             
             # Check if TARGET_PRODUCTS_N is reached
-            if total_products_found >= TARGET_PRODUCTS_N:
+            if results_manager.total_products_with_stock >= TARGET_PRODUCTS_N:
                 logging.info(f"Target number of products ({TARGET_PRODUCTS_N}) reached.")
                 break
             if total_urls_processed >= total_urls_to_process:

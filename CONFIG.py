@@ -1,49 +1,75 @@
 # EXECUTION PARAMETERS
-ROOT_URL = "https://worldshishas.com/"
-#ROOT_URL = "https://sismalaser.es"
-#ROOT_URL = "https://worldshishas.com/"
-TARGET_PRODUCTS_N = 10000
-GENERAL_BATCH_SIZE = 10
+# ROOT_URL = "https://www.tumundosmartphone.com/"
+# ROOT_URL = "https://www.lamparas.es/"
+# ROOT_URL = "https://naturalezagrow.com/"
+# ROOT_URL = "https://valkanik.com/"
+# ROOT_URL = "https://sismalaser.es"
+# ROOT_URL = "https://worldshishas.com/"
+ROOT_URL = "https://www.casasantander.com/"
 
-USE_RATE_LIMIT=False
+TARGET_PRODUCTS_N = 3000
+GENERAL_BATCH_SIZE = 5
+
+MAX_SITEMAPS = 5
+
+USE_RATE_LIMIT = False
 
 # IGNORE URLS WITH:
 IGNORE_URLS_WITH = ""
 
 # WEBSITE_DETAILS
+OG_IMAGE = True
 IMAGE_CLASSES = [
     'zoomContainer',
 ]
-NO_OG_IMAGE = False
 
+# Title
+OG_TITLE = True
 TITLE_TAGS = [
     {"tag": "h1", "class": "h1 page-title"},
 ]
-NO_OG_TITLE = False
+TITLE_SEPARATORS = [" | "]
 
+# Description
+OG_DESCRIPTION = False
 DESCRIPTION_TAGS = [
-    {"tag": "div", "class": "short-description col-sm-12 value content"},
+    {"tag": "div", "class": "mh-estate__section"}, # Worldshishas
+    #{"tag": "div", "class": "rte-content"}, # Valkanik
+    # {"tag": "div", "class": "short-description"}, # Naturaleza Grow
+    # {"tag": "section", "class": "product-description-short"}, # lamparas.es
+    # {"tag": "section", "class": "product-description-section block-section"}, # TuMundoSmathpone
 ]
-NO_OG_DESCRIPTION = False
+MODIFY_DESCRIPTION = True
+DELETE_DESCRIPTION_CHARACTERS = ["---", "\\"]
+
 
 # Price config
 PRICE_TAGS = [
-            {"tag": "p", "class": "price"}
+            {"tag": "div", "class": "mh-estate__details__price"} # Worldshishas
+            #{"tag": "span", "class": "product-price current-price-value"}, # Valkanik
+            # {"tag": "span", "class": "price"}, # Naturaleza Grow
+            # {"tag": "span", "class":"current-price-value"}, # lamparas.es
+            # {"tag": "span", "class":" precios"}, # TuMundoSmathpone
             ]
 LOWER_PRICE = True
 
 # No stock
-CHECK_STOCK = True
+CHECK_STOCK = False
 STOCK_TAGS = [
-    {"tag": "p", "class": "stock"}
+    {"tag": "p", "class": "stock"} # Worldshishas
 ]
-STOCK_TEXT = "Sin stock"
+STOCK_TEXT = "Sin stock" # Worldshishas
 
 # TITLE FETCH BATCH SIZE
 CONCURRENT_REQUESTS = 10
 
 # REQUEST TIMEOUT
 REQUEST_TIMEOUT = 20
+
+
+
+
+################ Deprecated ################
 
 # LLM BATCH SIZE
 LLM_BATCH_SIZE = 30

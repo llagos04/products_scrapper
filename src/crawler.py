@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 import aiohttp
@@ -7,16 +8,27 @@ from urllib.parse import urlparse, urljoin
 from playwright.async_api import async_playwright
 import logging
 from urllib.parse import urlparse, urljoin
-from CONFIG import IGNORE_URLS_WITH, USE_RATE_LIMIT, REQUEST_TIMEOUT
+from CONFIG import IGNORE_URLS_WITH, USE_RATE_LIMIT, REQUEST_TIMEOUT, MAX_SITEMAPS
+
 
 from xml.etree import ElementTree as ET
 
 # Función para extraer URLs desde un sitemap
+# Función para extraer URLs desde un sitemap
 async def get_urls_from_sitemap(domain):
     """
     Intenta obtener URLs desde el sitemap del dominio.
-    Primero busca el sitemap en /sitemap.xml o lo detecta desde el robots.txt.
+    Si el archivo 'sitemap.xml' existe localmente, lo procesa; de lo contrario, intenta obtenerlo del dominio.
     """
+    # Verifica si sitemap.xml existe localmente
+    if os.path.exists("sitemap.xml"):
+        logging.info("Archivo sitemap.xml encontrado localmente. Procesándolo...")
+        with open("sitemap.xml", "r", encoding="utf-8") as f:
+            sitemap_content = f.read()
+            return parse_sitemap_xml(sitemap_content)
+
+    # Si no existe localmente, procede a buscar en el dominio
+    logging.info("No se encontró sitemap.xml localmente, intentando obtenerlo desde el dominio...")
     possible_sitemap_urls = [
         urljoin(domain, '/sitemap.xml'),
         urljoin(domain, '/robots.txt')
@@ -29,20 +41,16 @@ async def get_urls_from_sitemap(domain):
                     if response.status == 200:
                         content_type = response.headers.get('Content-Type', '')
                         if 'xml' in content_type:
-                            # Si el contenido es XML, intentamos parsearlo como sitemap directamente
                             sitemap_content = await response.text()
                             return parse_sitemap_xml(sitemap_content)
                         elif 'text/plain' in content_type and 'robots.txt' in sitemap_url:
-                            # Si es un robots.txt, buscamos la línea con el sitemap
                             robots_content = await response.text()
                             sitemap_url = extract_sitemap_from_robots(robots_content)
                             if sitemap_url:
-                                # Intentamos obtener las URLs desde el sitemap indicado en robots.txt
                                 return await get_urls_from_sitemap(sitemap_url)
             except Exception as e:
                 logging.warning(f"Error al obtener el sitemap desde {sitemap_url}: {e}")
 
-    # Si no se encuentra un sitemap válido, retornamos una lista vacía
     return []
 
 # Función para parsear el contenido XML del sitemap
@@ -57,7 +65,6 @@ def parse_sitemap_xml(sitemap_content):
     except ET.ParseError as e:
         logging.error(f"Error al parsear el sitemap: {e}")
         return []
-
 # Función para extraer el sitemap de un robots.txt
 def extract_sitemap_from_robots(robots_content):
     """
@@ -115,18 +122,25 @@ class Crawler:
         all_sitemaps = []
         if not self.sitemap_checked:
             self.sitemap_checked = True  # Solo intentamos obtener el sitemap una vez
-            logging.info(f"Checking for sitemap at {self.domain}...")
+            logging.info(f"Checking for sitemap in robots.txt at {self.domain}...")
 
-            # Obtener las URLs del sitemap
-            sitemap_data = await self.get_urls_from_sitemap_recursive(self.domain + '/sitemap.xml')
+            # Intentar obtener el sitemap desde robots.txt
+            sitemap_url = await self.get_sitemap_from_robots_txt()
 
-            if sitemap_data:
-                logging.info(f"Found {len(sitemap_data)} URLs after processing all sitemaps.")
-                return sitemap_data
+            if sitemap_url:
+                # Obtener las URLs del sitemap usando el sitemap encontrado en robots.txt
+                logging.info(f"Procesando sitemap obtenido desde robots.txt: {sitemap_url}")
+                sitemap_data = await self.get_urls_from_sitemap_recursive(sitemap_url)
+
+                if sitemap_data:
+                    logging.info(f"Found {len(sitemap_data)} URLs after processing all sitemaps.")
+                    return sitemap_data
+                else:
+                    logging.info("No URLs found in sitemap.")
+                    return []
             else:
-                logging.info("No URLs found in sitemap.")
-                return []
-
+                logging.info("No sitemap found in robots.txt.")
+        
         # Si no hay sitemap, seguimos con el crawling tradicional
         logging.info(f"No sitemap found, proceeding with crawling...")
         urls_from_crawling = await self.get_all_urls_by_crawling()
@@ -134,12 +148,47 @@ class Crawler:
         logging.info(f"Found {len(urls_from_crawling)} URLs from crawling.")
         return [{'sitemap': 'Crawling', 'urls': urls_from_crawling}]
 
-   
+
+    async def get_sitemap_from_robots_txt(self):
+        """
+        Busca el archivo robots.txt en el dominio y extrae la URL del sitemap.
+        """
+        robots_url = f"{self.domain}/robots.txt"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(robots_url, timeout=10) as response:
+                    if response.status == 200:
+                        robots_content = await response.text()
+                        sitemap_url = self.extract_sitemap_from_robots(robots_content)
+                        if sitemap_url:
+                            logging.info(f"Sitemap encontrado en robots.txt: {sitemap_url}")
+                            return sitemap_url
+                        else:
+                            logging.info("No se encontró ninguna directiva Sitemap en robots.txt.")
+                            return None
+                    else:
+                        logging.warning(f"No se pudo obtener robots.txt desde {robots_url}, estado HTTP: {response.status}")
+                        return None
+        except Exception as e:
+            logging.error(f"Error al obtener robots.txt desde {robots_url}: {e}")
+            return None
+
+    def extract_sitemap_from_robots(self, robots_content):
+        """
+        Extrae la URL del sitemap desde el contenido de un archivo robots.txt.
+        """
+        for line in robots_content.splitlines():
+            if line.lower().startswith("sitemap:"):
+                return line.split(":", 1)[1].strip()
+        return None
+    
+
     async def get_urls_from_sitemap_recursive(self, sitemap_url):
         """
         Procesa un sitemap de forma recursiva para extraer URLs. Si un sitemap contiene otros sitemaps,
         sigue procesando hasta que encuentre URLs finales.
         """
+        sitemaps_counter = 0
         try:
             logging.info(f"Fetching sitemap: {sitemap_url}")
             async with aiohttp.ClientSession() as session:
@@ -155,10 +204,13 @@ class Crawler:
 
                         # Si el sitemap contiene otros sitemaps, procesarlos recursivamente
                         for sitemap in root.findall('sitemap:sitemap', ns):
+                            sitemaps_counter += 1
                             loc = sitemap.find('sitemap:loc', ns).text
                             logging.info(f"Found secondary sitemap: {loc}")
                             secondary_sitemaps = await self.get_urls_from_sitemap_recursive(loc)
                             all_sitemaps.extend(secondary_sitemaps)
+                            if sitemaps_counter > MAX_SITEMAPS:
+                                break
 
                         # Si el sitemap contiene URLs finales, extraerlas
                         urls = []
