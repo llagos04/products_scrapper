@@ -7,8 +7,14 @@ import src.results as results
 import time
 from colorama import init, Fore, Style
 from dotenv import load_dotenv
-from CONFIG import ROOT_URL, LLM_BATCH_SIZE, TARGET_PRODUCTS_N, CONCURRENT_REQUESTS, GENERAL_BATCH_SIZE, IGNORE_URLS_WITH
+from CONFIG import ROOT_URL, LLM_BATCH_SIZE, TARGET_PRODUCTS_N, CONCURRENT_REQUESTS, GENERAL_BATCH_SIZE, IGNORE_URLS_WITH, CHECK_SITEMAP
 import signal
+from src.crawler import Crawler
+from src.fetcher import fetch_titles, fetch_product_details
+from src.analizer import select_product_urls
+from src.results import get_execution_number, ResultsManager
+
+
 
 load_dotenv()
 init()  # Initialize Colorama
@@ -43,37 +49,6 @@ for handler in logging.root.handlers:
 logging.getLogger('httpcore').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 
-def filter_urls(urls, results_manager):
-    # get the set of processed URLs
-    processed_urls = results_manager.get_processed_urls()
-
-    # filter out processed URLs
-    filtered_urls = [url for url in urls if url not in processed_urls]
-
-    # remove duplicates
-    filtered_urls = list(set(filtered_urls))
-
-    # IGNORE_URLS_WITH
-    filtered_urls = [url for url in filtered_urls if not IGNORE_URLS_WITH in url]
-
-    return filtered_urls
-
-def filter_titles(urls_titles, results_manager):
-    # get the set of processed URLs
-    processed_titles = results_manager.get_processed_titles()
-
-    # filter out processed URLs
-    filtered_urls_titles = [url_title for url_title in urls_titles if url_title["title"] not in processed_titles]
-
-    # remove duplicates
-    filtered_urls_titles_copy = filtered_urls_titles.copy()
-    filtered_urls_titles = []
-    for url_title in filtered_urls_titles_copy:
-        if url_title["title"] not in processed_titles:
-            filtered_urls_titles.append(url_title)
-
-    return filtered_urls_titles
-
 
 
 def manual_sitemap_selection(sitemap, urls):
@@ -101,7 +76,6 @@ async def main():
 
         # Check if the domain is JavaScript-driven
         logging.info(f"Checking if {ROOT_URL} is JavaScript-driven...")
-        is_javascript_driven = await crawler.is_javascript_driven_async(ROOT_URL)
         is_javascript_driven = True  # Forcing JavaScript-driven for now
         logging.info(f"{ROOT_URL} is {'not ' if not is_javascript_driven else ''}JavaScript-driven.")
         
@@ -131,39 +105,29 @@ async def main():
 
         # Fetch all URLs (from sitemap or crawling)
         logging.info(f"Fetching all URLs from {ROOT_URL}...")
-        all_sitemaps = await crawler_instance.get_all_urls()
 
         selected_urls = []
-        
-        # Recorrer la lista de sitemaps y sus URLs asociadas
-        for sitemap_data in all_sitemaps:
-            sitemap, urls = sitemap_data['sitemap'], sitemap_data['urls']
-            urls_from_sitemap = manual_sitemap_selection(sitemap, urls)
-            selected_urls.extend(urls_from_sitemap)
+        if CHECK_SITEMAP:
+            all_sitemaps = await crawler_instance.get_all_urls()
+            # Recorrer la lista de sitemaps y sus URLs asociadas
+            for sitemap_data in all_sitemaps:
+                sitemap, urls = sitemap_data['sitemap'], sitemap_data['urls']
+                urls_from_sitemap = manual_sitemap_selection(sitemap, urls)
+                selected_urls.extend(urls_from_sitemap)
 
-        # LOG adicional: mostrar todas las URLs seleccionadas
-        logging.info(f"Selected {len(selected_urls)} URLs after manual sitemap filtering.")
+            # LOG adicional: mostrar todas las URLs seleccionadas
+            logging.info(f"Selected {len(selected_urls)} URLs after manual sitemap filtering.")
         
         # If there are no manually selected URLs, proceed with crawling or LLM analysis
-        if not selected_urls:
+        else:
             logging.info("No URLs selected manually. Proceeding with crawling or LLM-based filtering...")
             # Perform crawling (if not already done) or use LLM for product selection
 
             # If we have no sitemaps or filtered URLs, we'll use the crawling method and the LLM
-            crawling_urls = await crawler_instance.get_all_urls_by_crawling()
-            logging.info(f"Found {len(crawling_urls)} URLs via crawling.")
+            selected_urls = await crawler_instance.get_all_urls_by_crawling()
+            logging.info(f"Found {len(selected_urls)} URLs via crawling.")
 
-            if crawling_urls:
-                logging.info(f"Using LLM to filter product URLs from {len(crawling_urls)} crawled URLs...")
-                url_titles = await fetcher.fetch_titles(crawling_urls, max_concurrent_requests=CONCURRENT_REQUESTS)
-
-                # Use LLM to identify product URLs
-                product_urls_titles = await analizer.select_product_urls(url_titles, LLM_BATCH_SIZE)
-                selected_urls = [url_title['url'] for url_title in product_urls_titles]
-                logging.info(f"LLM identified {len(selected_urls)} product URLs.")
-            else:
-                logging.info("No URLs found through crawling or sitemap.")
-                return
+            # Use LLM for product selection
 
         # Variables to keep track of counts
         total_products_found = 0

@@ -2,117 +2,94 @@ import os
 import asyncio
 import logging
 import aiohttp
-import random
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 from playwright.async_api import async_playwright
-import logging
-from urllib.parse import urlparse, urljoin
-from CONFIG import IGNORE_URLS_WITH, USE_RATE_LIMIT, REQUEST_TIMEOUT, MAX_SITEMAPS
-
-
 from xml.etree import ElementTree as ET
+from aiohttp import ClientSession
 
-# Función para extraer URLs desde un sitemap
-# Función para extraer URLs desde un sitemap
-async def get_urls_from_sitemap(domain):
-    """
-    Intenta obtener URLs desde el sitemap del dominio.
-    Si el archivo 'sitemap.xml' existe localmente, lo procesa; de lo contrario, intenta obtenerlo del dominio.
-    """
-    # Verifica si sitemap.xml existe localmente
-    if os.path.exists("sitemap.xml"):
-        logging.info("Archivo sitemap.xml encontrado localmente. Procesándolo...")
-        with open("sitemap.xml", "r", encoding="utf-8") as f:
-            sitemap_content = f.read()
-            return parse_sitemap_xml(sitemap_content)
+# Configuración (asegúrate de que estas variables estén definidas)
+IGNORE_URLS_WITH = []
+USE_RATE_LIMIT = False
+REQUEST_TIMEOUT = 10  # Puedes ajustar el tiempo de espera según tus necesidades
+MAX_SITEMAPS = 5  # Número máximo de sitemaps a procesar recursivamente
+MAX_URLS = 200  # Máximo de URLs a procesar
 
-    # Si no existe localmente, procede a buscar en el dominio
-    logging.info("No se encontró sitemap.xml localmente, intentando obtenerlo desde el dominio...")
-    possible_sitemap_urls = [
-        urljoin(domain, '/sitemap.xml'),
-        urljoin(domain, '/robots.txt')
-    ]
-    
-    async with aiohttp.ClientSession(headers={'User-Agent': 'YourCrawler/1.0'}) as session:
-        for sitemap_url in possible_sitemap_urls:
-            try:
-                async with session.get(sitemap_url, timeout=10) as response:
-                    if response.status == 200:
-                        content_type = response.headers.get('Content-Type', '')
-                        if 'xml' in content_type:
-                            sitemap_content = await response.text()
-                            return parse_sitemap_xml(sitemap_content)
-                        elif 'text/plain' in content_type and 'robots.txt' in sitemap_url:
-                            robots_content = await response.text()
-                            sitemap_url = extract_sitemap_from_robots(robots_content)
-                            if sitemap_url:
-                                return await get_urls_from_sitemap(sitemap_url)
-            except Exception as e:
-                logging.warning(f"Error al obtener el sitemap desde {sitemap_url}: {e}")
-
-    return []
-
-# Función para parsear el contenido XML del sitemap
-def parse_sitemap_xml(sitemap_content):
+async def fetch_links_with_playwright(url):
     """
-    Parsea el contenido XML del sitemap y extrae las URLs.
+    Usa Playwright para renderizar la página y extraer enlaces generados dinámicamente.
     """
-    try:
-        root = ET.fromstring(sitemap_content)
-        urls = [url_elem.text for url_elem in root.findall(".//{http://www.sitemaps.org/schemas/sitemap/0.9}loc")]
-        return urls
-    except ET.ParseError as e:
-        logging.error(f"Error al parsear el sitemap: {e}")
-        return []
-# Función para extraer el sitemap de un robots.txt
-def extract_sitemap_from_robots(robots_content):
-    """
-    Busca en el robots.txt la línea que indica la ubicación del sitemap.
-    """
-    for line in robots_content.splitlines():
-        if line.lower().startswith("sitemap:"):
-            return line.split(":", 1)[1].strip()
-    return None
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto(url)
+        html_content = await page.content()
+        soup = BeautifulSoup(html_content, "html.parser")
 
-def is_same_domain(domain, url):
-    return urlparse(domain).netloc == urlparse(url).netloc
+        links = []
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            full_url = urljoin(url, href)
+            links.append(full_url)
 
-async def is_javascript_driven_async(domain):
-    # Implement your logic to determine if a site is JavaScript-driven
-    # For this example, we'll assume it's not JavaScript-driven
-    return False
+        await browser.close()
+        return links
+
+def is_same_domain(domain, url, include_subdomains=True):
+    """
+    Verifica si la URL pertenece al dominio principal o a un subdominio.
+    """
+    domain_netloc = urlparse(domain).netloc.lower()
+    url_netloc = urlparse(url).netloc.lower()
+
+    if include_subdomains:
+        return url_netloc.endswith(domain_netloc)
+    else:
+        return domain_netloc == url_netloc
+
+def normalize_url(url):
+    """
+    Normaliza una URL eliminando el fragmento y asegurándose de que tiene esquema.
+    """
+    parsed = urlparse(url)
+    if not parsed.scheme:
+        url = 'http://' + url  # O 'https://' dependiendo de tu caso
+        parsed = urlparse(url)
+    return parsed._replace(fragment='').geturl()
 
 def is_html_page(url):
     """
-    Check if a URL is likely to point to an HTML page based on its file extension.
+    Acepta URLs incluso sin extensiones explícitas, excepto recursos no deseados conocidos.
     """
-    parsed_url = urlparse(url)
-    path = parsed_url.path.lower()
-    # List of extensions that are typically non-HTML resources
     non_html_extensions = (
         '.pdf', '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg',
         '.zip', '.rar', '.exe', '.dmg', '.apk', '.tar.gz', '.7z',
         '.mp3', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv',
-        '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt',
-        '.rtf', '.csv', '.ico', '.css', '.js', '.json', '.xml',
+        '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.ico', '.css', '.js', '.json', '.xml',
     )
-    if any(path.endswith(ext) for ext in non_html_extensions):
-        return False
-    return True
+    path = urlparse(url).path.lower()
+    return not any(path.endswith(ext) for ext in non_html_extensions)
 
 class Crawler:
     def __init__(self, domain, is_javascript_driven=False, ignore_links=[]):
-        self.domain = domain
+        self.domain = domain.rstrip('/')
         self.is_javascript_driven = is_javascript_driven
         self.visited = set()
-        self.urls_to_visit = [domain]
+        self.urls_to_visit = asyncio.Queue()
+        self.visited_lock = asyncio.Lock()
         self.ignore_links = ignore_links
         self.use_rate_limit = USE_RATE_LIMIT
-        self.rate_limit = 1  # Max requests per second
-        self.concurrent_requests = 5  # Max concurrent requests
-        self.lock = asyncio.Lock()
+        self.rate_limit = 1  # Máximo de solicitudes por segundo
+        self.concurrent_requests = 5  # Máximo de solicitudes concurrentes
         self.sitemap_checked = False  # Para evitar intentar obtener el sitemap más de una vez
+        self.stop_crawling = False  # Bandera para detener el crawling
+        # Headers comunes, incluyendo un User-Agent popular
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)'
+                          ' Chrome/85.0.4183.121 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br'
+        }
 
     async def get_all_urls(self):
         """
@@ -127,9 +104,25 @@ class Crawler:
             # Intentar obtener el sitemap desde robots.txt
             sitemap_url = await self.get_sitemap_from_robots_txt()
 
+            if not sitemap_url:
+                # Probar ubicaciones comunes para el sitemap
+                common_sitemap_paths = [
+                    f"{self.domain}/sitemap.xml",
+                    f"{self.domain}/sitemap_index.xml",
+                    f"{self.domain}/sitemap/sitemap.xml",
+                    f"{self.domain}/sitemaps.xml",
+                    f"{self.domain}/sitemapindex.xml"
+                ]
+                logging.info("No sitemap found in robots.txt. Checking common sitemap locations...")
+                for path in common_sitemap_paths:
+                    if await self.url_exists(path):
+                        logging.info(f"Sitemap found at {path}")
+                        sitemap_url = path
+                        break
+
             if sitemap_url:
-                # Obtener las URLs del sitemap usando el sitemap encontrado en robots.txt
-                logging.info(f"Procesando sitemap obtenido desde robots.txt: {sitemap_url}")
+                # Obtener las URLs del sitemap usando el sitemap encontrado
+                logging.info(f"Procesando sitemap encontrado: {sitemap_url}")
                 sitemap_data = await self.get_urls_from_sitemap_recursive(sitemap_url)
 
                 if sitemap_data:
@@ -139,7 +132,7 @@ class Crawler:
                     logging.info("No URLs found in sitemap.")
                     return []
             else:
-                logging.info("No sitemap found in robots.txt.")
+                logging.info("No sitemap found in robots.txt or common locations.")
         
         # Si no hay sitemap, seguimos con el crawling tradicional
         logging.info(f"No sitemap found, proceeding with crawling...")
@@ -148,6 +141,136 @@ class Crawler:
         logging.info(f"Found {len(urls_from_crawling)} URLs from crawling.")
         return [{'sitemap': 'Crawling', 'urls': urls_from_crawling}]
 
+    async def url_exists(self, url):
+        """
+        Verifica si una URL existe (respuesta 200).
+        """
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.head(url, timeout=10) as response:
+                    return response.status == 200
+        except Exception as e:
+            logging.error(f"Error checking URL {url}: {e}")
+            return False
+
+    async def get_all_urls_by_crawling(self):
+        semaphore = asyncio.Semaphore(self.concurrent_requests)
+
+        async def process_url(session):
+            while True:
+                url = await self.urls_to_visit.get()
+                if url is None:
+                    # Recibimos el sentinel, salimos del bucle
+                    self.urls_to_visit.task_done()
+                    break
+                try:
+                    async with semaphore:
+                        normalized_url = normalize_url(url)
+
+                        async with self.visited_lock:
+                            if normalized_url in self.visited:
+                                logging.debug(f"URL ya visitada: {normalized_url}")
+                                continue
+                            self.visited.add(normalized_url)
+
+                        # Verificar si se alcanzó MAX_URLS
+                        async with self.visited_lock:
+                            if len(self.visited) >= MAX_URLS:
+                                logging.info(f"Reached MAX_URLS limit of {MAX_URLS}, stopping crawling.")
+                                self.stop_crawling = True
+                                # Añadimos sentinels para desbloquear las tareas
+                                for _ in range(self.concurrent_requests):
+                                    await self.urls_to_visit.put(None)
+                                break
+
+                        logging.info(f"Procesando URL: {normalized_url}")
+                        try:
+                            async with session.get(normalized_url, headers=self.headers, timeout=REQUEST_TIMEOUT) as response:
+                                logging.info(f"Estado {response.status} recibido para: {normalized_url}")
+
+                                if response.status == 200:
+                                    content = await response.text()
+                                    soup = BeautifulSoup(content, "html.parser")
+
+                                    # Extraer enlaces del HTML
+                                    links_found = 0
+                                    for link in soup.find_all("a", href=True):
+                                        href = link["href"]
+                                        full_url = urljoin(normalized_url, href)
+                                        full_url = normalize_url(full_url)
+
+                                        if is_same_domain(self.domain, full_url):
+                                            async with self.visited_lock:
+                                                if full_url not in self.visited and full_url not in self.ignore_links:
+                                                    if not self.stop_crawling:
+                                                        await self.urls_to_visit.put(full_url)
+                                                        links_found += 1
+                                                        # Verificar si se alcanzó MAX_URLS
+                                                        if len(self.visited) + self.urls_to_visit.qsize() >= MAX_URLS:
+                                                            logging.info(f"Reached MAX_URLS limit of {MAX_URLS}, stopping addition of new URLs.")
+                                                            self.stop_crawling = True
+                                                            # Añadimos sentinels para desbloquear las tareas
+                                                            for _ in range(self.concurrent_requests):
+                                                                await self.urls_to_visit.put(None)
+                                                            break
+                                        else:
+                                            logging.debug(f"Skipping URL from different domain: {full_url}")
+
+                                    logging.info(f"{links_found} enlaces encontrados en {normalized_url}")
+
+                                    # Extraer enlaces JavaScript si es necesario
+                                    if self.is_javascript_driven and not self.stop_crawling:
+                                        js_links = await fetch_links_with_playwright(normalized_url)
+                                        for js_link in js_links:
+                                            full_js_link = urljoin(normalized_url, js_link)
+                                            full_js_link = normalize_url(full_js_link)
+
+                                            if is_same_domain(self.domain, full_js_link):
+                                                async with self.visited_lock:
+                                                    if full_js_link not in self.visited and full_js_link not in self.ignore_links:
+                                                        await self.urls_to_visit.put(full_js_link)
+                                                        # Verificar si se alcanzó MAX_URLS
+                                                        if len(self.visited) + self.urls_to_visit.qsize() >= MAX_URLS:
+                                                            logging.info(f"Reached MAX_URLS limit of {MAX_URLS}, stopping addition of new URLs.")
+                                                            self.stop_crawling = True
+                                                            # Añadimos sentinels para desbloquear las tareas
+                                                            for _ in range(self.concurrent_requests):
+                                                                await self.urls_to_visit.put(None)
+                                                            break
+                                            else:
+                                                logging.debug(f"Skipping JS URL from different domain: {full_js_link}")
+
+                        except Exception as e:
+                            logging.error(f"Error procesando {normalized_url}: {e}")
+                finally:
+                    self.urls_to_visit.task_done()
+
+        async with aiohttp.ClientSession(headers=self.headers) as session:
+            # Sembrar la cola con la URL inicial
+            await self.urls_to_visit.put(self.domain)
+
+            tasks = [asyncio.create_task(process_url(session)) for _ in range(self.concurrent_requests)]
+
+            await self.urls_to_visit.join()
+
+            for task in tasks:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        logging.info(f"Crawling completado. Total de URLs encontradas: {len(self.visited)}")
+        return list(self.visited)
+
+    def extract_sitemap_from_robots(self, robots_content):
+        """
+        Extrae la URL del sitemap desde el contenido de un archivo robots.txt.
+        """
+        for line in robots_content.splitlines():
+            if line.lower().startswith("sitemap:"):
+                return line.split(":", 1)[1].strip()
+        return None
 
     async def get_sitemap_from_robots_txt(self):
         """
@@ -155,7 +278,7 @@ class Crawler:
         """
         robots_url = f"{self.domain}/robots.txt"
         try:
-            async with aiohttp.ClientSession() as session:
+            async with ClientSession(headers=self.headers) as session:
                 async with session.get(robots_url, timeout=10) as response:
                     if response.status == 200:
                         robots_content = await response.text()
@@ -166,284 +289,53 @@ class Crawler:
                         else:
                             logging.info("No se encontró ninguna directiva Sitemap en robots.txt.")
                             return None
+                    elif response.status == 403:
+                        logging.warning("Acceso prohibido a robots.txt (403). Intentando sin robots.txt.")
+                        return None
                     else:
-                        logging.warning(f"No se pudo obtener robots.txt desde {robots_url}, estado HTTP: {response.status}")
+                        logging.warning(f"No se pudo obtener robots.txt, estado HTTP: {response.status}")
                         return None
         except Exception as e:
-            logging.error(f"Error al obtener robots.txt desde {robots_url}: {e}")
+            logging.error(f"Error al obtener robots.txt: {e}")
             return None
 
-    def extract_sitemap_from_robots(self, robots_content):
-        """
-        Extrae la URL del sitemap desde el contenido de un archivo robots.txt.
-        """
-        for line in robots_content.splitlines():
-            if line.lower().startswith("sitemap:"):
-                return line.split(":", 1)[1].strip()
-        return None
-    
-
-    async def get_urls_from_sitemap_recursive(self, sitemap_url):
+    async def get_urls_from_sitemap_recursive(self, sitemap_url, depth=0):
         """
         Procesa un sitemap de forma recursiva para extraer URLs. Si un sitemap contiene otros sitemaps,
         sigue procesando hasta que encuentre URLs finales.
         """
-        sitemaps_counter = 0
+        if depth > MAX_SITEMAPS:
+            logging.warning(f"Max sitemap recursion depth ({MAX_SITEMAPS}) reached.")
+            return []
+
         try:
             logging.info(f"Fetching sitemap: {sitemap_url}")
-            async with aiohttp.ClientSession() as session:
+            async with ClientSession(headers=self.headers) as session:
                 async with session.get(sitemap_url, timeout=10) as response:
                     if response.status == 200:
                         content = await response.text()
-
-                        # Parsear el contenido XML del sitemap
                         root = ET.fromstring(content)
                         ns = {'sitemap': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
-
                         all_sitemaps = []
 
-                        # Si el sitemap contiene otros sitemaps, procesarlos recursivamente
+                        # Manejo recursivo de sitemaps
                         for sitemap in root.findall('sitemap:sitemap', ns):
-                            sitemaps_counter += 1
                             loc = sitemap.find('sitemap:loc', ns).text
                             logging.info(f"Found secondary sitemap: {loc}")
-                            secondary_sitemaps = await self.get_urls_from_sitemap_recursive(loc)
+                            secondary_sitemaps = await self.get_urls_from_sitemap_recursive(loc, depth + 1)
                             all_sitemaps.extend(secondary_sitemaps)
-                            if sitemaps_counter > MAX_SITEMAPS:
-                                break
 
-                        # Si el sitemap contiene URLs finales, extraerlas
-                        urls = []
-                        for url in root.findall('sitemap:url/sitemap:loc', ns):
-                            loc = url.text
-                            urls.append(loc)
-
-                        # Guardar el sitemap y sus URLs
+                        # Manejo de URLs finales
+                        urls = [url.text for url in root.findall('sitemap:url/sitemap:loc', ns)]
                         if urls:
-                            all_sitemaps.append({
-                                'sitemap': sitemap_url,
-                                'urls': urls
-                            })
-
+                            all_sitemaps.append({'sitemap': sitemap_url, 'urls': urls})
                         return all_sitemaps
+                    elif response.status == 403:
+                        logging.warning(f"Access to {sitemap_url} is forbidden (403).")
                     else:
                         logging.error(f"Failed to fetch sitemap: {sitemap_url}, Status Code: {response.status}")
-                        return []
+                    return []
         except Exception as e:
             logging.error(f"Error fetching sitemap {sitemap_url}: {e}")
             return []
 
-        
-    def is_html_page(self, url):
-        """
-        Verifica si una URL apunta a una página HTML basándose en la extensión del archivo.
-        """
-        non_html_extensions = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.svg', '.mp4', '.mp3']
-        return not any(url.lower().endswith(ext) for ext in non_html_extensions)
-
-    async def get_all_urls_by_crawling(self):
-        """
-        Obtiene todas las URLs usando el método de crawling tradicional, recorriendo páginas.
-        """
-        all_urls = []
-        semaphore = asyncio.Semaphore(self.concurrent_requests)
-
-        async with aiohttp.ClientSession(headers={'User-Agent': 'YourCrawler/1.0'}) as session:
-            tasks = []
-            while self.urls_to_visit:
-                current_url = self.urls_to_visit.pop(0)
-                tasks.append(self.process_url(session, current_url, all_urls, semaphore))
-
-                if len(tasks) >= self.concurrent_requests:
-                    await asyncio.gather(*tasks)
-                    tasks = []
-
-            if tasks:
-                await asyncio.gather(*tasks)
-
-        return all_urls  # Devolver todas las URLs obtenidas por crawling
-
-    async def process_url(self, session, current_url, all_urls, semaphore):
-        """
-        Procesa una URL individual, obteniendo sus enlaces si es HTML y no ha sido visitada.
-        """
-        async with semaphore:
-            parsed_url = urlparse(current_url)
-            normalized_url = parsed_url._replace(fragment='').geturl()
-
-            # Ignore URLs with specific query parameters
-            if IGNORE_URLS_WITH in parsed_url.query:
-                return
-
-            if normalized_url not in self.visited:
-                self.visited.add(normalized_url)
-
-                # Skip non-HTML URLs
-                if not is_html_page(current_url):
-                    logging.info(f"Skipping non-HTML URL: {current_url}")
-                    return
-
-                retry_count = 0
-                max_retries = 5
-                backoff_factor = 1
-
-                while retry_count <= max_retries:
-                    try:
-                        # Rate limiting: wait if necessary
-                        if self.use_rate_limit:
-                            async with self.lock:
-                                await asyncio.sleep(random.uniform(1 / self.rate_limit, 2 / self.rate_limit))
-
-                        async with session.get(current_url, timeout=10) as response:
-                            if response.status == 200 and 'text/html' in response.headers.get('Content-Type', ''):
-                                content = await response.text()
-                                soup = BeautifulSoup(content, 'html.parser')
-                                # Extract and enqueue new URLs
-                                for link in soup.find_all('a', href=True):
-                                    href = link['href']
-                                    full_url = urljoin(self.domain, href)
-                                    full_url = urlparse(full_url)._replace(fragment='').geturl()
-                                    if is_same_domain(self.domain, full_url) and full_url not in self.visited and full_url not in self.ignore_links:
-                                        self.urls_to_visit.append(full_url)
-                                # Añadir la URL actual procesada
-                                all_urls.append(current_url)
-                                break  # Exit retry loop on success
-                            elif response.status == 429:
-                                if self.use_rate_limit:
-                                    retry_after = response.headers.get('Retry-After')
-                                    if retry_after:
-                                        wait_time = int(retry_after)
-                                    else:
-                                        wait_time = backoff_factor * (2 ** retry_count)
-                                    logging.warning(f"Received 429 for {current_url}, retrying after {wait_time} seconds")
-                                    await asyncio.sleep(wait_time)
-                                    retry_count += 1
-                                else:
-                                    logging.error(f"Received 429 for {current_url}, but rate limiting is disabled.")
-                                    break  # Do not retry if rate limiting is disabled
-                            else:
-                                logging.error(f"Failed to load {current_url}, status code: {response.status}")
-                                break  # Don't retry other status codes
-                    except Exception as e:
-                        logging.exception(f"Error accessing {current_url}: {e}")
-                        if self.use_rate_limit:
-                            retry_count += 1
-                            wait_time = backoff_factor * (2 ** retry_count)
-                            await asyncio.sleep(wait_time)
-                        else:
-                            break  # Do not retry if rate limiting is disabled
-                else:
-                    if self.use_rate_limit:
-                        logging.error(f"Exceeded max retries for {current_url}")
-
-    async def get_next_batch_urls_pyw(self, batch_size):
-        batch_urls = []
-        semaphore = asyncio.Semaphore(self.concurrent_requests)
-        backoff_factor = 1
-        max_retries = 5
-
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(user_agent='YourCrawler/1.0')
-
-            async def process_url(current_url):
-                async with semaphore:
-                    normalized_url = urlparse(current_url)._replace(fragment='').geturl()
-
-                    if normalized_url not in self.visited:
-                        self.visited.add(normalized_url)
-
-                        # Skip non-HTML URLs
-                        if not is_html_page(current_url):
-                            logging.info(f"Skipping non-HTML URL: {current_url}")
-                            return
-
-                        retry_count = 0
-
-                        while retry_count <= max_retries:
-                            try:
-                                # Rate limiting
-                                if self.use_rate_limit:
-                                    async with self.lock:
-                                        await asyncio.sleep(random.uniform(1 / self.rate_limit, 2 / self.rate_limit))
-
-                                page = await context.new_page()
-
-                                # # Block unnecessary resources to speed up loading
-                                # async def block_unnecessary_resources(route, request):
-                                #     if request.resource_type in ['image', 'media', 'font']:
-                                #         await route.continue_()
-                                #     else:
-                                #         await route.abort()
-
-                                # await page.route("**/*", block_unnecessary_resources)
-
-                                # Set a reduced timeout
-                                response = await page.goto(current_url, timeout=10000)  # 10 seconds timeout
-
-                                # Check for 429 status code
-                                if response.status == 429:
-                                    if self.use_rate_limit:
-                                        retry_after = response.headers.get('Retry-After')
-                                        if retry_after:
-                                            wait_time = int(retry_after)
-                                        else:
-                                            wait_time = backoff_factor * (2 ** retry_count)
-                                        logging.warning(f"Received 429 for {current_url}, retrying after {wait_time} seconds")
-                                        await page.close()
-                                        await asyncio.sleep(wait_time)
-                                        retry_count += 1
-                                        continue
-                                    else:
-                                        logging.error(f"Received 429 for {current_url}, but rate limiting is disabled.")
-                                        await page.close()
-                                        break  # Do not retry if rate limiting is disabled
-                                elif response.status != 200:
-                                    logging.error(f"Failed to load {current_url}, status code: {response.status}")
-                                    await page.close()
-                                    break  # Don't retry other status codes
-
-                                # Wait for the page to load necessary content
-                                await page.wait_for_selector("a", state='attached', timeout=REQUEST_TIMEOUT*1000)
-
-                                # Extract all links from the page
-                                links = await page.query_selector_all("a")
-                                for link in links:
-                                    href = await link.get_attribute("href")
-                                    if href:
-                                        full_url = urljoin(self.domain, href)
-                                        full_url = urlparse(full_url)._replace(fragment='').geturl()
-                                        if is_same_domain(self.domain, full_url) and full_url not in self.visited and full_url not in self.ignore_links:
-                                            self.urls_to_visit.append(full_url)
-                                await page.close()
-                                # After processing the current URL, add it to batch_urls
-                                batch_urls.append(current_url)
-                                break  # Exit retry loop on success
-                            except Exception as e:
-                                logging.exception(f"Error accessing {current_url}: {e}")
-                                if self.use_rate_limit:
-                                    retry_count += 1
-                                    wait_time = backoff_factor * (2 ** retry_count)
-                                    await asyncio.sleep(wait_time)
-                                else:
-                                    break  # Do not retry if rate limiting is disabled
-                        else:
-                            if self.use_rate_limit:
-                                logging.error(f"Exceeded max retries for {current_url}")
-
-            # Process URLs concurrently
-            tasks = []
-            while self.urls_to_visit and len(batch_urls) < batch_size:
-                current_url = self.urls_to_visit.pop(0)
-                tasks.append(process_url(current_url))
-
-                if len(tasks) >= self.concurrent_requests:
-                    await asyncio.gather(*tasks)
-                    tasks = []
-
-            if tasks:
-                await asyncio.gather(*tasks)
-
-            await browser.close()
-
-        return batch_urls

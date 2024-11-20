@@ -3,7 +3,7 @@ import logging
 import time
 from bs4 import BeautifulSoup
 import aiohttp
-from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, LOWER_PRICE, CHECK_STOCK, STOCK_TAGS, STOCK_TEXT, OG_IMAGE, OG_DESCRIPTION, OG_TITLE, REQUEST_TIMEOUT, TITLE_SEPARATORS, MODIFY_DESCRIPTION, DELETE_DESCRIPTION_CHARACTERS
+from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, LOWER_PRICE, CHECK_STOCK, STOCK_TAGS, STOCK_TEXT, OG_IMAGE, OG_DESCRIPTION, OG_TITLE, REQUEST_TIMEOUT, TITLE_SEPARATORS, MODIFY_DESCRIPTION, DESCRIPTION_ID, DELETE_DESCRIPTION_CHARACTERS, CHECK_PRICE
 import re
 from markdownify import markdownify as md
 import re
@@ -17,14 +17,25 @@ async def fetch_title(session, url, semaphore, max_retries=3):
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                                   'AppleWebKit/537.36 (KHTML, like Gecko) '
                                   'Chrome/85.0.4183.83 Safari/537.36',
-                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Language': 'es-ES,es;q=0.9',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                     'Connection': 'keep-alive'
                 }
-                timeout = aiohttp.ClientTimeout(total=5)  # Total timeout of 5 seconds
+                timeout = aiohttp.ClientTimeout(total=5)
 
                 async with session.get(url, timeout=timeout, headers=headers) as response:
-                    if response.status != 200:
+                    if response.status == 403:
+                        logging.warning(f"Access forbidden (403) to {url}. Attempt {attempt} of {max_retries}")
+                        if attempt < max_retries:
+                            delay = 2 ** attempt
+                            logging.info(f"Retrying {url} in {delay} seconds...")
+                            await asyncio.sleep(delay)
+                            continue
+                        else:
+                            logging.error(f"Failed to fetch {url} after {max_retries} attempts due to 403 Forbidden.")
+                            return {'url': url, 'title': "Access forbidden (403)"}
+
+                    elif response.status != 200:
                         return {'url': url, 'title': f"Status code: {response.status}"}
 
                     content = await response.text()
@@ -45,6 +56,7 @@ async def fetch_title(session, url, semaphore, max_retries=3):
 
                     formatted_title = format_title(title)
                     return {'url': url, 'title': "Title not found" if not formatted_title else formatted_title}
+
             except asyncio.TimeoutError:
                 logging.warning(f"Attempt {attempt}: Timed out fetching {url}")
                 if attempt < max_retries:
@@ -53,19 +65,23 @@ async def fetch_title(session, url, semaphore, max_retries=3):
                     await asyncio.sleep(delay)
                 else:
                     logging.error(f"Failed to fetch {url} after {max_retries} attempts due to timeout.")
-                    return None
+                    return {'url': url, 'title': "Timed out"}
             except Exception as e:
                 logging.exception(f"Attempt {attempt}: Error fetching title from {url}: {e}")
-                return None
+                return {'url': url, 'title': "Error"}
 
 def format_title(title):
     if not title:
         return None
+    title_lower = title.lower()
     for separator in TITLE_SEPARATORS:
-        if separator in title:
-            parts = title.split(separator)
-            return parts[0].strip()
+        index = title_lower.find(separator.lower())
+        if index > 0:
+            return title[:index].strip()
     return title.strip()
+
+
+
 async def fetch_titles(urls, max_concurrent_requests=10):
     """
     Asynchronously fetch titles for a list of URLs.
@@ -135,7 +151,6 @@ def format_description(description):
     return description
 
 
-
 def fetch_product_details_from_soup(soup):
     """
     Fetch product details from BeautifulSoup object and check for stock if needed.
@@ -143,7 +158,7 @@ def fetch_product_details_from_soup(soup):
     :param soup: BeautifulSoup object.
     :return: A dictionary with 'image', 'description', 'price', and 'in_stock'.
     """
-    # Extract image URL
+    # Extract image URLs
     image = None
     if OG_IMAGE:
         meta_image = soup.find("meta", property="og:image")
@@ -151,91 +166,84 @@ def fetch_product_details_from_soup(soup):
             image = meta_image.get("content", "").strip()
 
     if not image:
-        for img_class in IMAGE_CLASSES:
-            img_tag = soup.find("img", class_=img_class)
-            if img_tag:
-                image = img_tag.get("src", "").strip()
-                if image:
-                    break
-        else:
-            image = "Image not found"
+        # Buscar todas las URLs de imágenes dentro de los divs con la clase específica
+        easyzoom_divs = soup.find_all("div", class_="easyzoom easyzoom-product")
+        image_urls = []
+
+        for div in easyzoom_divs:
+            img_tag = div.find("a", class_="js-easyzoom-trigger")
+            if img_tag and img_tag.get("href"):
+                image_urls.append(img_tag.get("href").strip())
+        
+        # Si encontramos al menos una URL, tomamos la primera como `image`
+        if image_urls:
+            image = image_urls[0]
+
+        # En caso de que no se encuentre ninguna URL, usar IMAGE_CLASSES como respaldo
+        if not image:
+            for img_class in IMAGE_CLASSES:
+                img_tag = soup.find("a", class_=img_class)
+                if img_tag:
+                    image = img_tag.get("href", "").strip()
+                    if image:
+                        break
+            else:
+                image = "Image not found"
 
     # Extract description
-    description = None
+    description = ''
     # Recorrer los DESCRIPTION_TAGS definidos en CONFIG.py
     for desc_tag in DESCRIPTION_TAGS:
-        # Intentamos encontrar todos los divs que contienen la clase
         logging.info({'Se va a procesar': desc_tag})
-        divs = soup.find_all(desc_tag["tag"], class_=desc_tag["class"])
-        logging.info({'divs': divs})
 
-        # Verificamos cada div para asegurarnos de que tiene exactamente la clase que queremos
-        for div in divs:
-            # Verificar que el div tiene exactamente la clase especificada
-            if div.get("class") == [desc_tag["class"]]:  
-                # Extraer el contenido HTML interno del div
-                logging.info({'div': div})
-                html_content = div.decode_contents()
-                logging.info({'html_content': html_content})
-                
-                # **Limpieza del HTML**
-                # Crear un objeto BeautifulSoup
-                soup_desc = BeautifulSoup(html_content, 'html.parser')
-                
+        # Determinar si buscar por 'class' o 'id'
+        if "class" in desc_tag:
+            # Buscar todos los elementos que coincidan con el tag y cuya clase contenga la clase especificada
+            elements = soup.find_all(desc_tag["tag"], class_=lambda c: c and desc_tag["class"] in c)
+        elif "id" in desc_tag:
+            # Buscar todos los elementos que coincidan con el tag y el id especificado
+            elements = soup.find_all(desc_tag["tag"], id=desc_tag["id"])
+        else:
+            # Si no hay ni 'class' ni 'id', buscar solo por el tag
+            elements = soup.find_all(desc_tag["tag"])
 
-                logging.debug(f"HTML content being parsed: {html_content[:500]}")
-                
-                # Reemplazar <br> con saltos de línea
-                for br in soup_desc.find_all("br"):
-                    br.replace_with("\n")
-                
-                # Eliminar párrafos vacíos y espacios no rompientes
-                for p in soup_desc.find_all('p'):
-                    # Eliminar espacios no rompientes
-                    for elem in p.contents:
-                        if isinstance(elem, str):
-                            elem.replace_with(elem.replace('\xa0', ' '))
-                    if not p.get_text(strip=True):
-                        p.decompose()
-                
-                # Eliminar etiquetas vacías como <div>, <span>
-                for tag in soup_desc.find_all():
-                    if tag.name in ['div', 'span', 'p'] and not tag.get_text(strip=True):
-                        tag.decompose()
-                
-                # Obtener el HTML limpio
-                clean_html = str(soup_desc)
-                
-                # **Conversión a Markdown**
-                description = md(clean_html)
-                
-                # **Postprocesamiento del texto Markdown**
-                # Eliminar espacios en blanco al inicio y final
-                description = description.strip()
-                
-                # Reemplazar múltiples líneas en blanco por una sola
-                description = re.sub(r'\n\s*\n+', '\n\n', description)
-                
-                # Eliminar líneas que contienen solo espacios
-                description = '\n'.join([line.rstrip() for line in description.splitlines() if line.strip()])
-                
-                logging.info({'description': description})
+        logging.info({'elements': elements})
 
-                break  # Rompemos el bucle si encontramos la descripción
+        for element in elements:
+            # Extraer el texto incluyendo elementos anidados
+            text_content = element.get_text(separator='\n').strip()
+            description += f"\n{text_content}"
+            logging.info({'description': description})
 
-        if description:  # Rompemos si ya hemos encontrado una descripción válida
-            break
+        # Continuamos con el siguiente desc_tag sin romper el bucle
 
-    # Si no se encontró ninguna descripción válida
-    if not description:
+    if not description.strip():
         description = "Description not found"
     else:
-        # Formatear la descripción
-        description = format_description(description)
+        # Remover saltos de línea extra y espacios en blanco
+        description = re.sub(r'\n\s*\n+', '\n\n', description)
+        description = '\n'.join([line.rstrip() for line in description.splitlines() if line.strip()])
+        if MODIFY_DESCRIPTION:
+            description = format_description(description)
 
+    # Buscar en todo el HTML un enlace a un archivo PDF y añadirlo al final de la descripción
+    technical_sheet_url = None
+    a_tags = soup.find_all('a', href=True)
+    for a_tag in a_tags:
+        href = a_tag['href']
+        if href.lower().endswith('.pdf'):
+            technical_sheet_url = href.strip()
+            break
+
+    # Añadir la URL al final de la descripción si se encontró
+    if technical_sheet_url:
+        description += f"\n\nFicha técnica: {technical_sheet_url}"
 
     # Extract prices
-    price_list = []
+    if CHECK_PRICE:
+        price_list = []
+    else:
+        price_list = [0]
     for price_tag in PRICE_TAGS:
         tag = soup.find(price_tag["tag"], class_=price_tag["class"])
         if tag:
@@ -243,16 +251,8 @@ def fetch_product_details_from_soup(soup):
             prices = extract_prices(price_text)
             price_list.extend(prices)
 
-    if not price_list:
-        price = "Price not found"
-    else:
-        # Choose the lowest price if LOWER_PRICE is True
-        if LOWER_PRICE:
-            price = format_price(min(price_list))
-        else:
-            price = format_price(price_list[0])  # Use the first found price if not selecting the lowest
+    price = "Price not found" if not price_list else format_price(min(price_list) if LOWER_PRICE else price_list[0])
 
-    # Check stock availability
     in_stock = True
     if CHECK_STOCK:
         for stock_tag in STOCK_TAGS:
@@ -263,38 +263,62 @@ def fetch_product_details_from_soup(soup):
 
     return {
         "image": image,
-        "description": description,
+        "description": description.strip(),
         "price": price,
         "in_stock": in_stock
     }
 
-async def fetch_details(session, url, title, semaphore):
+
+
+async def fetch_details(session, url, title, semaphore, max_retries=3):
     async with semaphore:
-        try:
-            headers = {
-                # Your headers here
-            }
-            timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+        for attempt in range(1, max_retries + 1):
+            try:
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                                  'AppleWebKit/537.36 (KHTML, like Gecko) '
+                                  'Chrome/85.0.4183.83 Safari/537.36',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Connection': 'keep-alive'
+                }
+                timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
 
-            async with session.get(url, timeout=timeout, headers=headers) as response:
-                if response.status != 200:
-                    logging.warning(f"Status code: {response.status}")
-                                        # Include the URL in discarded products
-                    return ('discarded', {'url': url, 'title': title})
+                async with session.get(url, timeout=timeout, headers=headers) as response:
+                    if response.status == 403:
+                        logging.warning(f"Access forbidden (403) to {url}. Attempt {attempt} of {max_retries}")
+                        if attempt < max_retries:
+                            delay = 2 ** attempt
+                            logging.info(f"Retrying {url} in {delay} seconds...")
+                            await asyncio.sleep(delay)
+                            continue
+                        else:
+                            logging.error(f"Failed to fetch {url} after {max_retries} attempts due to 403 Forbidden.")
+                            return ('discarded', {'url': url, 'title': title, 'error': "Access forbidden (403)"})
 
-                content = await response.text()
-                soup = BeautifulSoup(content, 'lxml')
-                logging.info({'soup': soup})
-                details = fetch_product_details_from_soup(soup)
+                    elif response.status != 200:
+                        logging.warning(f"Status code: {response.status}")
+                        return ('discarded', {'url': url, 'title': title, 'error': f"Status code: {response.status}"})
 
-                # If no price is found, discard
-                if details["price"] == "Price not found":
-                    logging.warning("Price not found")
-                    return ('discarded', {'url': url, 'title': title})
+                    content = await response.text()
+                    soup = BeautifulSoup(content, 'lxml')
+                    details = fetch_product_details_from_soup(soup)
 
-                # If product is out of stock
-                if CHECK_STOCK and not details["in_stock"]:
-                    return ('without_stock', {
+                    if details["price"] == "Price not found":
+                        logging.warning("Price not found")
+                        return ('discarded', {'url': url, 'title': title})
+
+                    if CHECK_STOCK and not details["in_stock"]:
+                        return ('without_stock', {
+                            "url": url,
+                            "title": title,
+                            "image": details["image"],
+                            "description": details["description"],
+                            "price": details["price"],
+                            "in_stock": details["in_stock"]
+                        })
+
+                    return ('in_stock', {
                         "url": url,
                         "title": title,
                         "image": details["image"],
@@ -303,21 +327,10 @@ async def fetch_details(session, url, title, semaphore):
                         "in_stock": details["in_stock"]
                     })
 
-                # Product is in stock and has price
-                return ('in_stock', {
-                    "url": url,
-                    "title": title,
-                    "image": details["image"],
-                    "description": details["description"],
-                    "price": details["price"],
-                    "in_stock": details["in_stock"]
-                })
-
-        except Exception as e:
-            logging.error(f"Error fetching details for {url}: {e}")
-            # Include the URL in discarded products
-            return ('discarded', {'url': url, 'title': title})
-
+            except Exception as e:
+                logging.error(f"Error fetching details for {url}: {e}")
+                return ('discarded', {'url': url, 'title': title, 'error': str(e)})
+            
 async def fetch_product_details(urls_titles, max_concurrent_requests=10):
     semaphore = asyncio.Semaphore(max_concurrent_requests)
     connector = aiohttp.TCPConnector(limit_per_host=max_concurrent_requests)
