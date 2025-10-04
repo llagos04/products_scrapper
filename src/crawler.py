@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 from playwright.async_api import async_playwright
 from xml.etree import ElementTree as ET
+from lxml import etree as lxml_etree
 from aiohttp import ClientSession
 
 # Configuración (asegúrate de que estas variables estén definidas)
@@ -84,12 +85,34 @@ class Crawler:
         self.sitemap_checked = False  # Para evitar intentar obtener el sitemap más de una vez
         self.stop_crawling = False  # Bandera para detener el crawling
         # Headers comunes, incluyendo un User-Agent popular
+        # self.headers = {
+        #     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)'
+        #                   ' Chrome/85.0.4183.121 Safari/537.36',
+        #     'Accept-Language': 'es-ES,es;q=0.9',
+        #     'Accept-Encoding': 'gzip, deflate, br'
+        # }
+        # self.headers = {
+        #     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Safari/605.1.15',
+        #     'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+        #     'Accept-Encoding': 'gzip, deflate, br',
+        #     'Connection': 'keep-alive',
+        #     'Upgrade-Insecure-Requests': '1',
+        #     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        #     'Referer': 'https://www.google.com/',
+        #     'DNT': '1',  # Do Not Track header
+        # }
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)'
-                          ' Chrome/85.0.4183.121 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br'
+            "User-Agent": "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.163 Mobile Safari/537.36",
+            "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Referer": "https://www.google.com/",
+            "DNT": "1",
         }
+
+
 
     async def get_all_urls(self):
         """
@@ -107,11 +130,13 @@ class Crawler:
             if not sitemap_url:
                 # Probar ubicaciones comunes para el sitemap
                 common_sitemap_paths = [
+                    f"{self.domain}/1_index_sitemap.xml",
                     f"{self.domain}/sitemap.xml",
                     f"{self.domain}/sitemap_index.xml",
                     f"{self.domain}/sitemap/sitemap.xml",
                     f"{self.domain}/sitemaps.xml",
-                    f"{self.domain}/sitemapindex.xml"
+                    f"{self.domain}/sitemapindex.xml",
+                    
                 ]
                 logging.info("No sitemap found in robots.txt. Checking common sitemap locations...")
                 for path in common_sitemap_paths:
@@ -299,10 +324,89 @@ class Crawler:
             logging.error(f"Error al obtener robots.txt: {e}")
             return None
 
+    def parse_sitemap_xml(self, content, sitemap_url):
+        """
+        Intenta parsear el XML del sitemap usando diferentes métodos, empezando por los más robustos.
+        """
+        parsers = [
+            ("lxml", lambda c: lxml_etree.fromstring(c.encode('utf-8'), parser=lxml_etree.XMLParser(recover=True, encoding='utf-8'))),
+            ("beautifulsoup", lambda c: BeautifulSoup(c, 'xml')),
+            ("etree", lambda c: ET.fromstring(c))
+        ]
+
+        for parser_name, parser_func in parsers:
+            try:
+                logging.info(f"Trying to parse sitemap with {parser_name}: {sitemap_url}")
+                root = parser_func(content)
+                logging.info(f"Successfully parsed sitemap with {parser_name}")
+                return root, parser_name
+            except Exception as e:
+                logging.warning(f"Failed to parse sitemap with {parser_name}: {e}")
+                continue
+
+        logging.error(f"All XML parsers failed for sitemap {sitemap_url}")
+        return None, None
+
+    def extract_urls_from_parsed_xml(self, root, parser_name):
+        """
+        Extrae URLs del XML parseado, manejando diferentes formatos según el parser usado.
+        """
+        urls = []
+
+        try:
+            if parser_name == "beautifulsoup":
+                # Para BeautifulSoup, buscar elementos sin namespace
+                url_elements = root.find_all('url')
+                for url_elem in url_elements:
+                    loc = url_elem.find('loc')
+                    if loc and loc.text:
+                        urls.append(loc.text)
+
+            elif parser_name in ["lxml", "etree"]:
+                # Para lxml y etree, usar xpath con namespaces
+                ns = {'sitemap': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
+                url_elements = root.findall('.//sitemap:url/sitemap:loc', ns)
+                urls = [url_elem.text for url_elem in url_elements if url_elem.text]
+
+        except Exception as e:
+            logging.error(f"Error extracting URLs from parsed XML: {e}")
+            return []
+
+        return urls
+
+    def extract_secondary_sitemaps(self, root, parser_name):
+        """
+        Extrae URLs de sitemaps secundarios del XML parseado.
+        """
+        secondary_sitemaps = []
+
+        try:
+            if parser_name == "beautifulsoup":
+                sitemaps = root.find_all('sitemap')
+                for sitemap in sitemaps:
+                    loc = sitemap.find('loc')
+                    if loc and loc.text:
+                        secondary_sitemaps.append(loc.text)
+
+            elif parser_name in ["lxml", "etree"]:
+                ns = {'sitemap': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
+                sitemap_elements = root.findall('.//sitemap:sitemap', ns)
+                for sitemap in sitemap_elements:
+                    loc_elem = sitemap.find('.//sitemap:loc', ns)
+                    if loc_elem is not None and loc_elem.text:
+                        secondary_sitemaps.append(loc_elem.text)
+
+        except Exception as e:
+            logging.error(f"Error extracting secondary sitemaps: {e}")
+            return []
+
+        return secondary_sitemaps
+
     async def get_urls_from_sitemap_recursive(self, sitemap_url, depth=0):
         """
         Procesa un sitemap de forma recursiva para extraer URLs. Si un sitemap contiene otros sitemaps,
         sigue procesando hasta que encuentre URLs finales.
+        Maneja automáticamente XML mal formado usando diferentes parsers.
         """
         if depth > MAX_SITEMAPS:
             logging.warning(f"Max sitemap recursion depth ({MAX_SITEMAPS}) reached.")
@@ -314,21 +418,32 @@ class Crawler:
                 async with session.get(sitemap_url, timeout=10) as response:
                     if response.status == 200:
                         content = await response.text()
-                        root = ET.fromstring(content)
-                        ns = {'sitemap': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
+
+                        # Intentar parsear el XML con diferentes métodos
+                        root, parser_name = self.parse_sitemap_xml(content, sitemap_url)
+
+                        if root is None:
+                            logging.error(f"Could not parse sitemap {sitemap_url} with any parser. Skipping.")
+                            return []
+
+                        # Extraer URLs del XML parseado
+                        urls = self.extract_urls_from_parsed_xml(root, parser_name)
+
+                        # Extraer URLs de sitemaps secundarios
+                        secondary_sitemap_urls = self.extract_secondary_sitemaps(root, parser_name)
+
                         all_sitemaps = []
 
-                        # Manejo recursivo de sitemaps
-                        for sitemap in root.findall('sitemap:sitemap', ns):
-                            loc = sitemap.find('sitemap:loc', ns).text
-                            logging.info(f"Found secondary sitemap: {loc}")
-                            secondary_sitemaps = await self.get_urls_from_sitemap_recursive(loc, depth + 1)
-                            all_sitemaps.extend(secondary_sitemaps)
-
-                        # Manejo de URLs finales
-                        urls = [url.text for url in root.findall('sitemap:url/sitemap:loc', ns)]
+                        # Si encontramos URLs, agregarlas al resultado
                         if urls:
                             all_sitemaps.append({'sitemap': sitemap_url, 'urls': urls})
+
+                        # Manejo recursivo de sitemaps secundarios
+                        for secondary_url in secondary_sitemap_urls:
+                            logging.info(f"Found secondary sitemap: {secondary_url}")
+                            secondary_sitemaps = await self.get_urls_from_sitemap_recursive(secondary_url, depth + 1)
+                            all_sitemaps.extend(secondary_sitemaps)
+
                         return all_sitemaps
                     elif response.status == 403:
                         logging.warning(f"Access to {sitemap_url} is forbidden (403).")

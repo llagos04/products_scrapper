@@ -126,6 +126,7 @@ async def main():
             # If we have no sitemaps or filtered URLs, we'll use the crawling method and the LLM
             selected_urls = await crawler_instance.get_all_urls_by_crawling()
             logging.info(f"Found {len(selected_urls)} URLs via crawling.")
+            
 
             # Use LLM for product selection
 
