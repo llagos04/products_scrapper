@@ -13,6 +13,7 @@ from src.crawler import Crawler
 from src.fetcher import fetch_titles, fetch_product_details
 from src.analizer import select_product_urls
 from src.results import get_execution_number, ResultsManager
+import sys
 
 
 
@@ -67,6 +68,43 @@ def manual_sitemap_selection(sitemap, urls):
     else:
         return []  # Si elige "no", se descartan todas las URLs
 
+async def test_sitemap():
+    """Función de prueba para verificar el fetching del sitemap"""
+    print(f"Probando fetching del sitemap para: {ROOT_URL}")
+    print("=" * 60)
+
+    try:
+        # Inicializar crawler
+        crawler_instance = Crawler(ROOT_URL, True, [])
+
+        # Obtener todos los sitemaps y URLs
+        all_sitemaps = await crawler_instance.get_all_urls()
+
+        print(f"\nResultado: Se encontraron {len(all_sitemaps)} sitemaps")
+        print("-" * 40)
+
+        for i, sitemap_data in enumerate(all_sitemaps, 1):
+            sitemap_url = sitemap_data['sitemap']
+            urls = sitemap_data['urls']
+            print(f"\nSitemap {i}: {sitemap_url}")
+            print(f"URLs encontradas: {len(urls)}")
+
+            # Mostrar primeras 5 URLs como ejemplo
+            if urls:
+                print("Primeras URLs:")
+                for j, url in enumerate(urls[:5], 1):
+                    print(f"  {j}. {url}")
+                if len(urls) > 5:
+                    print(f"  ... y {len(urls) - 5} más")
+
+        print("\n" + "=" * 60)
+        print("Prueba completada exitosamente!")
+
+    except Exception as e:
+        print(f"Error durante la prueba: {e}")
+        import traceback
+        traceback.print_exc()
+
 async def main():
     """
     Main function to orchestrate the web scraping process.
@@ -117,7 +155,7 @@ async def main():
 
             # LOG adicional: mostrar todas las URLs seleccionadas
             logging.info(f"Selected {len(selected_urls)} URLs after manual sitemap filtering.")
-        
+
         # If there are no manually selected URLs, proceed with crawling or LLM analysis
         else:
             logging.info("No URLs selected manually. Proceeding with crawling or LLM-based filtering...")
@@ -128,7 +166,7 @@ async def main():
             logging.info(f"Found {len(selected_urls)} URLs via crawling.")
             
 
-            # Use LLM for product selection
+            # Use LLM for product selectio
 
         # Variables to keep track of counts
         total_products_found = 0
@@ -194,6 +232,13 @@ async def main():
             elapsed_iteration_time = time.time() - start_iteration_time
             logging.info(Fore.GREEN + Style.BRIGHT + f"Completed iteration {iterations} in {elapsed_iteration_time:.2f} seconds" + Style.RESET_ALL)
             
+            # Agregar delay entre batches si hay rate limiting activado
+            if results_manager.total_products_with_stock < TARGET_PRODUCTS_N and selected_urls:
+                from CONFIG import USE_RATE_LIMIT, BATCH_DELAY
+                if USE_RATE_LIMIT:
+                    logging.info(f"Rate limiting activado. Esperando {BATCH_DELAY} segundos antes del siguiente batch...")
+                    time.sleep(BATCH_DELAY)
+
             # Check if TARGET_PRODUCTS_N is reached
             if results_manager.total_products_with_stock >= TARGET_PRODUCTS_N:
                 logging.info(f"Target number of products ({TARGET_PRODUCTS_N}) reached.")
@@ -214,4 +259,7 @@ async def main():
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    if len(sys.argv) > 1 and sys.argv[1] == 'test_sitemap':
+        asyncio.run(test_sitemap())
+    else:
+        asyncio.run(main())

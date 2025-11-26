@@ -1,40 +1,403 @@
 import asyncio
 import logging
 import time
+import random
 from bs4 import BeautifulSoup
 import aiohttp
 from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, LOWER_PRICE, CHECK_STOCK, STOCK_TAGS, STOCK_TEXT, OG_IMAGE, OG_DESCRIPTION, OG_TITLE, REQUEST_TIMEOUT, TITLE_SEPARATORS, MODIFY_DESCRIPTION, DESCRIPTION_ID, DELETE_DESCRIPTION_CHARACTERS, CHECK_PRICE, IMAGE_IDS, ROOT_URL, MODIFY_IMAGE_URL, CUSTOM_IMAGE_PATTERN
 import re
 from markdownify import markdownify as md
 import re
+from CONFIG import USE_PROXIES, AUTO_FETCH_PROXIES, USE_RATE_LIMIT, MIN_REQUEST_DELAY, MAX_REQUEST_DELAY, BATCH_DELAY, RATE_LIMIT_BACKOFF_MULTIPLIER, MAX_RATE_LIMIT_RETRIES
 
 
-async def fetch_title(session, url, semaphore, max_retries=3):
-    async with semaphore:
-        for attempt in range(1, max_retries + 1):
-            try:
-                # headers = {
-                #     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                #                   'AppleWebKit/537.36 (KHTML, like Gecko) '
-                #                   'Chrome/85.0.4183.83 Safari/537.36',
-                #     'Accept-Language': 'es-ES,es;q=0.9',
-                #     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                #     'Connection': 'keep-alive'
-                # }
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Safari/605.1.15',
-                    'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
+class ProxyManager:
+    """
+    Gestor de proxies rotativos para evitar bloqueos por IP
+    """
+    def __init__(self):
+        # Lista inicial de proxies (se puede actualizar dinámicamente)
+        self.proxies = self._load_initial_proxies()
+        self.current_proxy_index = 0
+        self.failed_proxies = set()
+        self.proxy_stats = {}
+        self.use_proxies = USE_PROXIES  # Configuración global para activar/desactivar proxies
+
+    def _load_initial_proxies(self):
+        """
+        Carga la lista inicial de proxies. En producción, esto debería conectarse
+        a un servicio de proxies o leer de un archivo/database.
+        """
+        # Lista de ejemplo - reemplazar con proxies reales o servicio de proxies
+        return [
+            # Proxies de ejemplo - reemplazar con proxies reales
+            # Formato: 'protocol://ip:port' o 'protocol://user:pass@ip:port'
+
+            # Proxies HTTP gratuitos (ejemplos - cambiar por reales)
+            'http://185.82.99.181:9091',
+            'http://45.77.56.51:3128',
+            'http://167.99.182.197:3128',
+            'http://198.199.120.102:3128',
+            'http://159.65.171.69:80',
+
+            # Proxies HTTPS (ejemplos)
+            'https://52.157.128.119:3128',
+            'https://20.206.106.192:3128',
+            'https://172.67.181.231:3128',
+
+            # Más proxies para mayor rotación
+            'http://47.254.47.51:8080',
+            'http://8.219.97.248:80',
+            'http://154.236.168.179:1981',
+            'http://102.68.128.50:1981',
+            'http://41.216.230.154:1981',
+        ]
+
+    def update_proxy_list(self, new_proxies):
+        """
+        Actualiza la lista de proxies dinámicamente
+        """
+        self.proxies = new_proxies
+        self.failed_proxies.clear()  # Limpiar lista negra al actualizar
+        self.current_proxy_index = 0
+        logging.info(f"Proxy list updated with {len(new_proxies)} proxies")
+
+    def add_proxy(self, proxy):
+        """
+        Agrega un proxy individual a la lista
+        """
+        if proxy not in self.proxies:
+            self.proxies.append(proxy)
+            logging.info(f"Added proxy: {proxy}")
+
+    def remove_proxy(self, proxy):
+        """
+        Remueve un proxy de la lista
+        """
+        if proxy in self.proxies:
+            self.proxies.remove(proxy)
+            if proxy in self.failed_proxies:
+                self.failed_proxies.remove(proxy)
+            logging.info(f"Removed proxy: {proxy}")
+
+    def enable_proxies(self):
+        """Activa el uso de proxies"""
+        self.use_proxies = True
+        logging.info("Proxy usage enabled")
+
+    def disable_proxies(self):
+        """Desactiva el uso de proxies"""
+        self.use_proxies = False
+        logging.info("Proxy usage disabled")
+
+    async def fetch_free_proxies(self, limit=20):
+        """
+        Obtiene proxies gratuitos de fuentes públicas
+        """
+        proxy_sources = [
+            'https://free-proxy-list.net/',
+            'https://www.us-proxy.org/',
+            'https://free-proxy-list.com/',
+        ]
+
+        found_proxies = []
+
+        try:
+            import aiohttp
+
+            for source_url in proxy_sources:
+                try:
+                    headers = get_random_headers()
+                    async with aiohttp.ClientSession(headers=headers) as session:
+                        async with session.get(source_url, timeout=10) as response:
+                            if response.status == 200:
+                                content = await response.text()
+                                # Extraer IPs y puertos usando regex simple
+                                import re
+                                ip_port_pattern = r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{2,5})'
+                                matches = re.findall(ip_port_pattern, content)
+
+                                for ip, port in matches[:limit//len(proxy_sources)]:
+                                    proxy = f'http://{ip}:{port}'
+                                    if proxy not in found_proxies:
+                                        found_proxies.append(proxy)
+
+                except Exception as e:
+                    logging.warning(f"Error fetching proxies from {source_url}: {e}")
+                    continue
+
+        except ImportError:
+            logging.warning("aiohttp not available for fetching proxies")
+
+        if found_proxies:
+            self.update_proxy_list(found_proxies)
+            logging.info(f"Fetched {len(found_proxies)} free proxies")
+            return found_proxies
+        else:
+            logging.warning("No proxies found from free sources")
+            return []
+
+    def get_next_proxy(self):
+        """
+        Obtiene el siguiente proxy disponible rotando cíclicamente
+        """
+        if not self.proxies:
+            logging.warning("No hay proxies disponibles, usando conexión directa")
+            return None
+
+        # Filtrar proxies que no hayan fallado recientemente
+        available_proxies = [p for p in self.proxies if p not in self.failed_proxies]
+
+        if not available_proxies:
+            logging.warning("Todos los proxies han fallado, reiniciando lista de proxies fallidos")
+            self.failed_proxies.clear()
+            available_proxies = self.proxies
+
+        # Rotar al siguiente proxy
+        proxy = available_proxies[self.current_proxy_index % len(available_proxies)]
+        self.current_proxy_index += 1
+
+        # Actualizar estadísticas
+        if proxy not in self.proxy_stats:
+            self.proxy_stats[proxy] = {'success': 0, 'fail': 0, 'last_used': None}
+        self.proxy_stats[proxy]['last_used'] = time.time()
+
+        logging.debug(f"Usando proxy: {proxy}")
+        return proxy
+
+    def mark_proxy_success(self, proxy):
+        """Marca un proxy como exitoso"""
+        if proxy and proxy in self.proxy_stats:
+            self.proxy_stats[proxy]['success'] += 1
+            # Si un proxy que falló anteriormente funciona, lo removemos de la lista negra
+            if proxy in self.failed_proxies:
+                self.failed_proxies.remove(proxy)
+                logging.info(f"Proxy {proxy} recuperado y removido de lista negra")
+
+    def mark_proxy_failed(self, proxy):
+        """Marca un proxy como fallido"""
+        if proxy and proxy in self.proxy_stats:
+            self.proxy_stats[proxy]['fail'] += 1
+            self.failed_proxies.add(proxy)
+            logging.warning(f"Proxy {proxy} marcado como fallido")
+
+    def get_proxy_stats(self):
+        """Obtiene estadísticas de uso de proxies"""
+        return self.proxy_stats
+
+    def should_use_proxy(self):
+        """
+        Decide si usar proxy basado en configuración y disponibilidad
+        """
+        return self.use_proxies and bool(self.proxies and len(self.proxies) > 0)
+
+    def auto_enable_proxies_on_rate_limit(self, consecutive_429_errors):
+        """
+        Activa automáticamente proxies si se detectan muchos errores 429 consecutivos
+        """
+        if consecutive_429_errors >= 3 and not self.use_proxies:
+            logging.warning(f"Detectados {consecutive_429_errors} errores 429 consecutivos. Activando proxies automáticamente...")
+            self.enable_proxies()
+            # Intentar obtener proxies automáticamente
+            asyncio.create_task(self.fetch_free_proxies(limit=10))
+            return True
+        return False
+
+
+# Instancia global del gestor de proxies
+proxy_manager = ProxyManager()
+
+
+class RateLimiter:
+    """
+    Controla el rate limiting para evitar bloqueos por peticiones demasiado frecuentes
+    """
+    def __init__(self):
+        self.last_request_time = 0
+        self.use_rate_limiting = USE_RATE_LIMIT
+
+    async def wait_if_needed(self):
+        """
+        Espera el tiempo necesario antes de hacer la siguiente petición
+        """
+        if not self.use_rate_limiting:
+            return
+
+        current_time = time.time()
+        time_since_last_request = current_time - self.last_request_time
+
+        min_delay = MIN_REQUEST_DELAY
+        max_delay = MAX_REQUEST_DELAY
+
+        # Calcular delay aleatorio
+        required_delay = random.uniform(min_delay, max_delay)
+
+        if time_since_last_request < required_delay:
+            wait_time = required_delay - time_since_last_request
+            logging.debug(f"Rate limiting: esperando {wait_time:.2f} segundos")
+            await asyncio.sleep(wait_time)
+
+        self.last_request_time = time.time()
+
+    async def wait_between_batches(self):
+        """
+        Espera entre batches de peticiones
+        """
+        if not self.use_rate_limiting:
+            return
+
+        logging.info(f"Esperando {BATCH_DELAY} segundos entre batches...")
+        await asyncio.sleep(BATCH_DELAY)
+
+
+# Instancia global del rate limiter
+rate_limiter = RateLimiter()
+
+# Contador global de errores 429 consecutivos
+consecutive_429_errors = 0
+
+
+def get_random_headers():
+    """
+    Genera headers aleatorios para evitar bloqueos por rate limiting con amplia variedad de user-agents
+    """
+    user_agents = [
+        # Chrome Desktop - Windows
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+
+        # Chrome Desktop - macOS
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+
+        # Chrome Desktop - Linux
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+
+        # Firefox Desktop
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/120.0",
+        "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/120.0",
+
+        # Safari Desktop
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+
+        # Edge Desktop
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Edg/118.0.2088.76",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Edg/117.0.2045.47",
+
+        # Chrome Mobile - Android
+        "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 12; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
+
+        # Safari Mobile - iOS
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (iPad; CPU OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+
+        # Samsung Internet
+        "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/18.0 Chrome/99.0.4844.88 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 11; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/17.0 Chrome/96.0.4664.104 Mobile Safari/537.36",
+
+        # Opera Desktop
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 OPR/105.0.0.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 OPR/104.0.0.0",
+
+        # Vivaldi
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Vivaldi/6.5",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Vivaldi/6.4",
+
+        # Brave
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Brave/119",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Brave/118",
+    ]
+
+    accept_languages = [
+        "es-ES,es;q=0.9,en;q=0.8",
+        "es-ES,es;q=0.9",
+        "es,en;q=0.9,en-US;q=0.8",
+        "es-ES,es;q=0.9,*;q=0.5",
+        "es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7",
+        "es-MX,es;q=0.9,en;q=0.8",
+        "es-AR,es;q=0.9,en;q=0.8",
+        "es-CO,es;q=0.9,en;q=0.8",
+        "es-CL,es;q=0.9,en;q=0.8",
+        "es-PE,es;q=0.9,en;q=0.8"
+    ]
+
+    # Headers adicionales aleatorios para mayor variabilidad
+    additional_headers = {}
+    if random.choice([True, False]):
+        additional_headers['Cache-Control'] = random.choice(['no-cache', 'max-age=0'])
+    if random.choice([True, False]):
+        additional_headers['Pragma'] = 'no-cache'
+    if random.choice([True, False]):
+        additional_headers['Sec-Fetch-Dest'] = random.choice(['document', 'empty'])
+    if random.choice([True, False]):
+        additional_headers['Sec-Fetch-Mode'] = random.choice(['navigate', 'cors'])
+    if random.choice([True, False]):
+        additional_headers['Sec-Fetch-Site'] = random.choice(['none', 'cross-site'])
+
+    base_headers = {
+        'User-Agent': random.choice(user_agents),
+        'Accept-Language': random.choice(accept_languages),
                     'Accept-Encoding': 'gzip, deflate, br',
                     'Connection': 'keep-alive',
                     'Upgrade-Insecure-Requests': '1',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Referer': 'https://www.google.com/',
-                    'DNT': '1',  # Do Not Track header
-                }
+        'Referer': random.choice([
+            'https://www.google.com/',
+            'https://www.bing.com/',
+            'https://duckduckgo.com/',
+            'https://search.yahoo.com/',
+            '',
+        ]),
+        'DNT': '1',
+    }
+
+    # Combinar headers base con adicionales
+    base_headers.update(additional_headers)
+    return base_headers
+
+
+def create_session_with_random_headers():
+    """
+    Crea una sesión aiohttp con headers rotativos
+    """
+    return aiohttp.ClientSession(headers=get_random_headers())
+
+
+async def fetch_title(session, url, semaphore, max_retries=3):
+    async with semaphore:
+        # Aplicar rate limiting antes de cualquier petición
+        await rate_limiter.wait_if_needed()
+
+        for attempt in range(1, MAX_RATE_LIMIT_RETRIES + 1):
+            proxy = None
+            if proxy_manager.should_use_proxy():
+                proxy = proxy_manager.get_next_proxy()
+
+            try:
+                # Usar headers rotativos para cada request
+                headers = get_random_headers()
 
                 timeout = aiohttp.ClientTimeout(total=5)
 
-                async with session.get(url, timeout=timeout, headers=headers) as response:
+                async with session.get(url, timeout=timeout, headers=headers, proxy=proxy) as response:
                     if response.status == 403:
                         logging.warning(f"Access forbidden (403) to {url}. Attempt {attempt} of {max_retries}")
                         if attempt < max_retries:
@@ -46,11 +409,37 @@ async def fetch_title(session, url, semaphore, max_retries=3):
                             logging.error(f"Failed to fetch {url} after {max_retries} attempts due to 403 Forbidden.")
                             return {'url': url, 'title': "Access forbidden (403)"}
 
+                    elif response.status == 429:
+                        consecutive_429_errors += 1
+                        logging.warning(f"Rate limit exceeded (429) to {url}. Attempt {attempt} of {MAX_RATE_LIMIT_RETRIES}. Consecutive 429 errors: {consecutive_429_errors}")
+
+                        # Activar proxies automáticamente si hay muchos errores 429
+                        proxy_manager.auto_enable_proxies_on_rate_limit(consecutive_429_errors)
+
+                        if attempt < MAX_RATE_LIMIT_RETRIES:
+                            # Generar nuevos headers aleatorios
+                            new_headers = get_random_headers()
+                            logging.info(f"New headers for retry: User-Agent: {new_headers['User-Agent']}")
+                            # Esperar con backoff exponencial mejorado para rate limit
+                            delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
+                            logging.info(f"Rate limit detected. Retrying {url} with new headers in {delay:.2f} seconds...")
+                            await asyncio.sleep(delay)
+                            # Aplicar rate limiting adicional antes del retry
+                            await rate_limiter.wait_if_needed()
+                            continue
+                        else:
+                            logging.error(f"Failed to fetch {url} after {MAX_RATE_LIMIT_RETRIES} attempts due to 429 Rate Limit.")
+                            return {'url': url, 'title': "Rate limit exceeded (429)"}
+
                     elif response.status != 200:
                         return {'url': url, 'title': f"Status code: {response.status}"}
 
                     content = await response.text()
                     soup = BeautifulSoup(content, 'lxml')
+
+                    # Marcar proxy como exitoso y resetear contador de errores 429
+                    proxy_manager.mark_proxy_success(proxy)
+                    consecutive_429_errors = 0  # Resetear contador en petición exitosa
 
                     title = None
                     if OG_TITLE:
@@ -69,7 +458,8 @@ async def fetch_title(session, url, semaphore, max_retries=3):
                     return {'url': url, 'title': "Title not found" if not formatted_title else formatted_title}
 
             except asyncio.TimeoutError:
-                logging.warning(f"Attempt {attempt}: Timed out fetching {url}")
+                proxy_manager.mark_proxy_failed(proxy)
+                logging.warning(f"Attempt {attempt}: Timed out fetching {url} (proxy: {proxy})")
                 if attempt < max_retries:
                     delay = 2 ** attempt
                     logging.info(f"Retrying {url} in {delay} seconds...")
@@ -77,8 +467,19 @@ async def fetch_title(session, url, semaphore, max_retries=3):
                 else:
                     logging.error(f"Failed to fetch {url} after {max_retries} attempts due to timeout.")
                     return {'url': url, 'title': "Timed out"}
+            except aiohttp.ClientHttpProxyError as e:
+                proxy_manager.mark_proxy_failed(proxy)
+                logging.warning(f"Attempt {attempt}: Proxy error fetching {url} (proxy: {proxy}): {e}")
+                if attempt < max_retries:
+                    delay = 2 ** attempt
+                    logging.info(f"Retrying {url} with different proxy in {delay} seconds...")
+                    await asyncio.sleep(delay)
+                else:
+                    logging.error(f"Failed to fetch {url} after {max_retries} attempts due to proxy errors.")
+                    return {'url': url, 'title': "Proxy Error"}
             except Exception as e:
-                logging.exception(f"Attempt {attempt}: Error fetching title from {url}: {e}")
+                proxy_manager.mark_proxy_failed(proxy)
+                logging.exception(f"Attempt {attempt}: Error fetching title from {url} (proxy: {proxy}): {e}")
                 return {'url': url, 'title': "Error"}
 
 def format_title(title):
@@ -132,10 +533,30 @@ def extract_prices(text):
     Extrae todos los precios del texto, devolviendo una lista de precios numéricos.
     Detecta tanto precios con '€' delante como detrás del número.
     """
-    # Expresión regular mejorada para detectar precios con formato europeo
-    # Detecta precios con '€' delante o detrás del número
-    prices = re.findall(r'€?\s*(\d{1,3}(?:\.\d{3})*(?:,\d+)?)(?:\s*€)?', text)
-    
+    # Limpiar el texto de entidades HTML y caracteres especiales
+    import html
+    text = html.unescape(text)  # Convertir &nbsp; a espacios, etc.
+
+    # Reemplazar múltiples espacios por uno solo
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    # Expresión regular más robusta para detectar precios
+    # Busca patrones como: 17,90 €, €17,90, 17.90€, etc.
+    price_patterns = [
+        r'(\d{1,3}(?:\.\d{3})*(?:,\d+)?)\s*€',  # 17,90 €
+        r'€\s*(\d{1,3}(?:\.\d{3})*(?:,\d+)?)',  # €17,90
+        r'(\d{1,3}(?:\.\d{3})*(?:,\d+)?)€',     # 17,90€
+        r'(\d{1,3}(?:\.\d{3})*(?:,\d+)?)',      # 17,90 (sin símbolo)
+    ]
+
+    prices = []
+    for pattern in price_patterns:
+        matches = re.findall(pattern, text)
+        prices.extend(matches)
+
+    # Eliminar duplicados
+    prices = list(set(prices))
+
     price_values = []
     for p in prices:
         # Eliminar los puntos (separadores de miles)
@@ -144,7 +565,9 @@ def extract_prices(text):
         p_standard = p_no_thousand_sep.replace(',', '.')
         try:
             price_value = float(p_standard)
-            price_values.append(price_value)
+            # Solo incluir precios razonables (mayores a 0.01 y menores a 100000)
+            if 0.01 <= price_value <= 100000:
+                price_values.append(price_value)
         except ValueError:
             continue  # Omitir si no se puede convertir a float
     return price_values
@@ -328,14 +751,45 @@ def fetch_product_details_from_soup(soup):
         if image_urls:
             image = image_urls[0]
 
+    # Prioridad 3.5: cloud-zoom (tiendafetichista.com y sitios similares)
+    if not image:
+        cloud_zoom_links = soup.find_all("a", class_=lambda c: c and "cloud-zoom" in c)
+        for link in cloud_zoom_links:
+            href = link.get("href", "").strip()
+            if href and (href.endswith('.jpg') or href.endswith('.png') or href.endswith('.jpeg') or href.endswith('.webp')):
+                # Resolver URL relativa si es necesario
+                if href.startswith('/') and ROOT_URL:
+                    href = ROOT_URL.rstrip('/') + href
+                image = href
+                logging.info(f"Imagen encontrada via cloud-zoom: {image}")
+                break
+
     # Prioridad 4: IMAGE_CLASSES (respaldo)
     if not image:
         for img_class in IMAGE_CLASSES:
-            img_tag = soup.find("a", class_=img_class)
-            if img_tag:
-                image = img_tag.get("href", "").strip()
-                if image:
-                    break
+            # 4.a) Buscar primero <img> con las clases configuradas
+            img_el = soup.find("img", class_=lambda c: c and all(cls in c for cls in img_class.split()))
+            if img_el:
+                src_attr = img_el.get("src") or img_el.get("data-src") or img_el.get("data-original")
+                if src_attr:
+                    candidate = src_attr.strip()
+                    # Resolver URL relativa comenzando por '/'
+                    if candidate.startswith('/') and ROOT_URL:
+                        candidate = ROOT_URL.rstrip('/') + candidate
+                    image = candidate
+                    if image:
+                        break
+
+            # 4.b) Como alternativa, buscar <a> con esas clases y tomar href
+            a_el = soup.find("a", class_=lambda c: c and all(cls in c for cls in img_class.split()))
+            if a_el:
+                href = a_el.get("href", "").strip()
+                if href:
+                    if href.startswith('/') and ROOT_URL:
+                        href = ROOT_URL.rstrip('/') + href
+                    image = href
+                    if image:
+                        break
 
     # Prioridad 5: Custom pattern - buscar imágenes con patrón configurable
     if not image and CUSTOM_IMAGE_PATTERN:
@@ -364,31 +818,58 @@ def fetch_product_details_from_soup(soup):
 
     # Extract description
     description = ''
-    # Recorrer los DESCRIPTION_TAGS definidos en CONFIG.py
-    for desc_tag in DESCRIPTION_TAGS:
-        logging.info({'Se va a procesar': desc_tag})
+    # Prioridad 1: OG_DESCRIPTION
+    if OG_DESCRIPTION:
+        og_description = soup.find("meta", property="og:description")
+        if og_description and og_description.get("content"):
+            description = og_description.get("content")
+    
+    # Si no encontramos og:description, recorrer los DESCRIPTION_TAGS definidos en CONFIG.py
+    if not description:
+        for desc_tag in DESCRIPTION_TAGS:
+            logging.info({'Se va a procesar': desc_tag})
 
-        # Determinar si buscar por 'class' o 'id'
-        if "class" in desc_tag:
-            # Buscar todos los elementos que coincidan con el tag y cuya clase contenga la clase especificada
-            elements = soup.find_all(desc_tag["tag"], class_=lambda c: c and desc_tag["class"] in c)
-        elif "id" in desc_tag:
-            # Buscar todos los elementos que coincidan con el tag y el id especificado
-            elements = soup.find_all(desc_tag["tag"], id=desc_tag["id"])
-        else:
-            # Si no hay ni 'class' ni 'id', buscar solo por el tag
-            elements = soup.find_all(desc_tag["tag"])
+            # Determinar si buscar por 'class' o 'id'
+            if "class" in desc_tag:
+                # Buscar todos los elementos que coincidan con el tag y cuya clase contenga la clase especificada
+                elements = soup.find_all(desc_tag["tag"], class_=lambda c: c and desc_tag["class"] in c)
+            elif "id" in desc_tag:
+                # Buscar todos los elementos que coincidan con el tag y el id especificado
+                elements = soup.find_all(desc_tag["tag"], id=desc_tag["id"])
+            else:
+                # Si no hay ni 'class' ni 'id', buscar solo por el tag
+                elements = soup.find_all(desc_tag["tag"])
 
-        logging.info({'Número de elementos encontrados': len(elements)})
+            logging.info({'Número de elementos encontrados': len(elements)})
 
-        for i, element in enumerate(elements):
-            # Usar la función inteligente para extraer texto
-            text_content = extract_text_smart(element)
-            if text_content.strip():
-                if description:  # Si ya hay contenido, agregar separador
-                    description += '\n\n'
-                description += text_content.strip()
-                logging.info({f'description elemento {i+1}': text_content[:200] + '...' if len(text_content) > 200 else text_content})
+            # Evitar añadir descripciones duplicadas cuando hay elementos gemelos (desktop/mobile, duplicados por layout)
+            seen_element_texts = set()
+
+            for i, element in enumerate(elements):
+                # Extraer absolutamente todo el texto del div indicado (incluyendo subnodos)
+                raw_text = extract_text_comprehensive(element, '\n')
+
+                # Normalizar para comparar duplicados a nivel de elemento
+                normalized_for_set = re.sub(r'\s+', ' ', raw_text).strip().lower()
+                if not normalized_for_set:
+                    continue
+                if normalized_for_set in seen_element_texts:
+                    continue
+                seen_element_texts.add(normalized_for_set)
+
+                # Eliminar líneas consecutivas duplicadas dentro del propio bloque extraído
+                lines = [line.rstrip() for line in raw_text.splitlines()]
+                deduped_lines = []
+                for line in lines:
+                    if not deduped_lines or deduped_lines[-1] != line:
+                        deduped_lines.append(line)
+                text_content = '\n'.join([l for l in deduped_lines if l.strip()])
+
+                if text_content.strip():
+                    if description:  # Si ya hay contenido, agregar separador
+                        description += '\n\n'
+                    description += text_content.strip()
+                    logging.info({f'description elemento {i+1}': text_content[:200] + '...' if len(text_content) > 200 else text_content})
 
         # Continuamos con el siguiente desc_tag sin romper el bucle
 
@@ -435,13 +916,23 @@ def fetch_product_details_from_soup(soup):
                     price_bdi = ins_element.find("bdi")
                     price_text = price_bdi.get_text(strip=True) if price_bdi else ins_element.get_text(strip=True)
                 else:
-                    # Si no hay <ins>, tomar el precio desde el <bdi> dentro del <p> o <span>
+                    # Si no hay <ins>, tomar el precio desde el <bdi> dentro del <span>
                     price_bdi = element.find("bdi")
-                    price_text = price_bdi.get_text(strip=True) if price_bdi else element.get_text(strip=True)
+                    if price_bdi:
+                        price_text = price_bdi.get_text(strip=True)
+                    else:
+                        # Si no hay <bdi>, intentar extraer directamente del elemento
+                        price_text = element.get_text(strip=True)
 
+                # Extraer precios del texto
                 prices = extract_prices(price_text)
-                price_list.extend(prices)
+                if not prices:
+                    # Si no se encontraron precios, intentar con el texto completo del elemento
+                    full_text = element.get_text(strip=True)
+                    if full_text != price_text:
+                        prices = extract_prices(full_text)
 
+                price_list.extend(prices)
         price = "Price not found" if not price_list else format_price(price_list[0])  # Tomar el primer precio correcto
 
     in_stock = True
@@ -464,21 +955,20 @@ def fetch_product_details_from_soup(soup):
 
 async def fetch_details(session, url, title, semaphore, max_retries=3):
     async with semaphore:
-        for attempt in range(1, max_retries + 1):
+        # Aplicar rate limiting antes de cualquier petición
+        await rate_limiter.wait_if_needed()
+
+        for attempt in range(1, MAX_RATE_LIMIT_RETRIES + 1):
+            proxy = None
+            if proxy_manager.should_use_proxy():
+                proxy = proxy_manager.get_next_proxy()
+
             try:
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.6045.163 Mobile Safari/537.36",
-                    "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-                    "Accept-Encoding": "gzip, deflate, br",
-                    "Connection": "keep-alive",
-                    "Upgrade-Insecure-Requests": "1",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                    "Referer": "https://www.google.com/",
-                    "DNT": "1",
-                }
+                # Usar headers rotativos para cada request
+                headers = get_random_headers()
                 timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
 
-                async with session.get(url, timeout=timeout, headers=headers) as response:
+                async with session.get(url, timeout=timeout, headers=headers, proxy=proxy) as response:
                     if response.status == 403:
                         logging.warning(f"Access forbidden (403) to {url}. Attempt {attempt} of {max_retries}")
                         if attempt < max_retries:
@@ -490,6 +980,28 @@ async def fetch_details(session, url, title, semaphore, max_retries=3):
                             logging.error(f"Failed to fetch {url} after {max_retries} attempts due to 403 Forbidden.")
                             return ('discarded', {'url': url, 'title': title, 'error': "Access forbidden (403)"})
 
+                    elif response.status == 429:
+                        consecutive_429_errors += 1
+                        logging.warning(f"Rate limit exceeded (429) to {url}. Attempt {attempt} of {MAX_RATE_LIMIT_RETRIES}. Consecutive 429 errors: {consecutive_429_errors}")
+
+                        # Activar proxies automáticamente si hay muchos errores 429
+                        proxy_manager.auto_enable_proxies_on_rate_limit(consecutive_429_errors)
+
+                        if attempt < MAX_RATE_LIMIT_RETRIES:
+                            # Generar nuevos headers aleatorios
+                            new_headers = get_random_headers()
+                            logging.info(f"New headers for retry: User-Agent: {new_headers['User-Agent']}")
+                            # Esperar con backoff exponencial mejorado para rate limit
+                            delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
+                            logging.info(f"Rate limit detected. Retrying {url} with new headers in {delay:.2f} seconds...")
+                            await asyncio.sleep(delay)
+                            # Aplicar rate limiting adicional antes del retry
+                            await rate_limiter.wait_if_needed()
+                            continue
+                        else:
+                            logging.error(f"Failed to fetch {url} after {MAX_RATE_LIMIT_RETRIES} attempts due to 429 Rate Limit.")
+                            return ('discarded', {'url': url, 'title': title, 'error': "Rate limit exceeded (429)"})
+
                     elif response.status != 200:
                         logging.warning(f"Status code: {response.status}")
                         return ('discarded', {'url': url, 'title': title, 'error': f"Status code: {response.status}"})
@@ -497,6 +1009,10 @@ async def fetch_details(session, url, title, semaphore, max_retries=3):
                     content = await response.text()
                     soup = BeautifulSoup(content, 'lxml')
                     details = fetch_product_details_from_soup(soup)
+
+                    # Marcar proxy como exitoso y resetear contador de errores 429
+                    proxy_manager.mark_proxy_success(proxy)
+                    consecutive_429_errors = 0  # Resetear contador en petición exitosa
 
                     if details["price"] == "Price not found":
                         logging.warning("Price not found")
@@ -521,8 +1037,13 @@ async def fetch_details(session, url, title, semaphore, max_retries=3):
                         "in_stock": details["in_stock"]
                     })
 
+            except aiohttp.ClientHttpProxyError as e:
+                proxy_manager.mark_proxy_failed(proxy)
+                logging.error(f"Proxy error fetching details for {url} (proxy: {proxy}): {e}")
+                return ('discarded', {'url': url, 'title': title, 'error': f'Proxy Error: {str(e)}'})
             except Exception as e:
-                logging.error(f"Error fetching details for {url}: {e}")
+                proxy_manager.mark_proxy_failed(proxy)
+                logging.error(f"Error fetching details for {url} (proxy: {proxy}): {e}")
                 return ('discarded', {'url': url, 'title': title, 'error': str(e)})
             
 async def fetch_product_details(urls_titles, max_concurrent_requests=10):
@@ -617,7 +1138,8 @@ if __name__ == "__main__":
         logging.basicConfig(level=logging.INFO, encoding='utf-8')
 
         # Single URL title fetching
-        async with aiohttp.ClientSession() as session:
+        session_headers = get_random_headers()
+        async with aiohttp.ClientSession(headers=session_headers) as session:
             semaphore = asyncio.Semaphore(1)  # Only one request at a time
             title_result = await fetch_title(session, test_url, semaphore)
             print(f"Fetched title for {test_url}: {title_result}")

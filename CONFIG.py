@@ -28,9 +28,41 @@
 # ROOT_URL = "https://puertasparachimeneas.com/"
 # ROOT_URL = "https://runway.maraferrez.com/"
 # ROOT_URL = "https://www.lmrgraphics.com/"
-ROOT_URL = "https://www.viajeteca.net/"
+# ROOT_URL = "https://www.viajeteca.net/"
+# ROOT_URL = "https://www.trofeoutlet.com/"
+# ROOT_URL = "https://shop.skymedic.eu/"
+# ROOT_URL = "https://www.xuxes.store/"
+# ROOT_URL = "https://ridetoot.com/"
+# ROOT_URL = "https://sensoriberia.es/"
+# ROOT_URL = "https://www.cepillotecnico.es/"
+# ROOT_URL = "https://bronoir.com/"
+# ROOT_URL = "https://casasruralesmaribel.es/"
+# ROOT_URL = "https://buenahierba.shop/"
+# ROOT_URL = "https://www.onlycbdfans.com/"
+# ROOT_URL = "https://www.posterandpanel.com/"
+# ROOT_URL = "https://lacatalanacbd.com/"
+# ROOT_URL = "https://www.cbdstoremalaga.com/"
+# ROOT_URL = "https://www.icolorprint.com/"
+# ROOT_URL = "https://vioksport.es/"
+# ROOT_URL = "https://latiendadelosminerales.com/"
+# ROOT_URL = "https://www.juguetesabracadabra.es/"
+# ROOT_URL = "https://www.puntlove.es/"
+# ROOT_URL = "https://www.armitex.com/"
+# ROOT_URL = "https://cannacbdistribution.com/"
+# ROOT_URL = "https://www.thegoodshisha.com/"
+# ROOT_URL = "https://iberohemp.com/"
+# ROOT_URL = "https://fixelmovil.com"
+# ROOT_URL = "https://www.tiendafetichista.com/"
+# ROOT_URL = "https://www.growindustry.es/"
+# ROOT_URL = "https://ecoeko.es/"
+ROOT_URL = "https://www.placeforpros.com/"
+
+
 
 USE_PLAYWRIGHT = False
+
+# Moneda por defecto para formatear precios (USD o EUR)
+
 
 TARGET_PRODUCTS_N = 2000
 GENERAL_BATCH_SIZE = 5
@@ -39,18 +71,17 @@ MAX_SITEMAPS = 5
 CHECK_SITEMAP = True
 MAX_URLS = 1000  # Máximo de URLs a procesar
 
-USE_RATE_LIMIT = False
+USE_RATE_LIMIT = True
 
 # IGNORE URLS WITH:
 IGNORE_URLS_WITH = "https://www.kiwichi.com?add-to-cart=5767"
 
 # WEBSITE_DETAILS
-OG_IMAGE = False
+OG_IMAGE = True
 IMAGE_IDS = [
-    'bigpic',
+    
 ]
 IMAGE_CLASSES = [
-
 ]
 
 # Custom image pattern for specific websites
@@ -80,12 +111,36 @@ TITLE_TAGS = [
     # {"tag": "h1", "itemprop": "name"}, # Puertas Parachimeneas
     # {"tag": "h1", "class": "product_title entry-title wd-entities-title"}, # MaraFerrez
     # {"tag": "h1", "class": ""}, # LMRGraphics
-    {"tag": "h1", "class": ""}, # Viajeteca
+    # {"tag": "h1", "class": ""}, # Viajeteca
+    # {"tag": "h1", "class": "titulohome"}, # Trofeoutlet
+    # {"tag": "h1", "class": "product_title entry-title"}, # skymedic
+    # {"tag": "h1", "class": ""}, # Xuxes
+    # {"tag": "h1", "class": "product_title entry-title"}, # Sensoriberia
+    # {"tag": "h1", "class": "product_title entry-title single-post-title"}, # Cepillotecnico
+    # {"tag": "h1", "class": "product_title entry-title elementor-heading-title elementor-size-default"}, # Onlycbdfans
+    # {"tag": "h1", "class": ""}, # Posterandpanel
+    # {"tag": "h1", "class": "h2 product-single__title notranslate"}, # Posterandpanel
+    # {"tag": "h1", "class": "product_title entry-title elementor-heading-title elementor-size-default"}, # Cbds Store Malaga
+    # {"tag": "h1", "class": "red ng-binding"}, # Icolorprint
+    # {"tag": "h1", "class": "product_title entry-title"}, # Vioksport
+    # {"tag": "h1", "class": "h1"}, # La tienda de los minerales
+    # {"tag": "h1", "class": "h1 page-title"}, # Juguetes Abracadabra
+    # {"tag": "h2", "class": "product-title"}, # Punt Love
+    # {"tag": "h1", "class": "page-title"}, # Armitex
+    # {"tag": "h1", "class": "product_title entry-title"}, # Cannacbdistribution
+    # {"tag": "h1", "class": "product_title entry-title"}, # The Good Shisha
+    # {"tag": "h1", "class": "product-info__title h2"}, # IberoHemp
+    # {"tag": "h3", "class": "iefYrdFOXPcYkgxwP"}, # Fixelmovil
+    # {"tag": "h1", "class": ""}, # Tienda Fetichista
+    # {"tag": "h1", "class": "product-title"}, # Grow Industry
+    # {"tag": "h1", "class": "product_title entry-title"}, # Ecoeko
+    {"tag": "h1", "class": "font-heading-extra-bold margin0"}, # Place for Pros
+
 ]
-TITLE_SEPARATORS = ["-"]
+TITLE_SEPARATORS = [""]
 
 # Description
-OG_DESCRIPTION = False
+OG_DESCRIPTION = True
 DESCRIPTION_TAGS = [
     # {"tag": "div", "class": "woocommerce-tabs wc-tabs-wrapper"}, # Worldshishas
     # {"tag": "div", "class": "rte-content"}, # Valkanik
@@ -135,15 +190,46 @@ DESCRIPTION_TAGS = [
     # {"tag": "div", "class": "rte align_justify"}, # Puertas Parachimeneas
     # {"tag": "div", "class": "wd-accordion-item"}, # Puertas Parachimeneas
     # {"tag": "div", "class": "col-xxl-3"}, # LMRGraphics
-    {"tag": "div", "id": "head_panel02"}, # Viajeteca
+    # {"tag": "div", "id": "head_panel02"}, # Viajeteca
+    # {"tag": "div", "class": "col-md-6 descripcionficha"}, # Trofeoutlet
+    # {"tag": "div", "class": "post-content woocommerce-product-details__short-description"}, # skymedic
+    # {"tag": "div", "class": "woocommerce-tabs wc-tabs-wrapper"}, # skymedic
+    # {"tag": "div", "class": "et_pb_column et_pb_column_4_4 et_pb_column_inner et_pb_column_inner_3_tb_body et-last-child"}, # Xuxes
+    # {"tag": "div", "class": "nasa-panel entry-content active"}, # Sensoriberia
+    # {"tag": "div", "class": "wpb_text_column wpb_content_element"}, # Cepillotecnico
+    # {"tag": "div", "class": "product-form__option-info"}, # Bronoir
+    # {"tag": "main", "class": "qodef-grid qodef-layout--template qodef-gutter--normal"}, # Casas Rurales Maribel
+    # {"tag": "div", "class": "summary-inner"}, # Buenahierba
+    # {"tag": "div", "class": "woocommerce-tabs wc-tabs-wrapper tabs-layout-tabs"}, # Buenahierba
+    # {"tag": "div", "class": "elementor-element elementor-element-06f2fbc e-con-full e-flex e-con e-child"}, # Onlycbdfans
+    # {"tag": "div", "class": "woocommerce-Tabs-panel woocommerce-Tabs-panel--description panel entry-content wc-tab"}, # Onlycbdfans
+    # {"tag": "div", "class": "col-xs-6 col_2"}, # Posterandpanel
+    # {"tag": "div", "class": "grid__item medium-up--one-half"}, # La catalana cbd
+    # {"tag": "div", "class": "woocommerce-Tabs-panel woocommerce-Tabs-panel--description panel entry-content wc-tab"}, # Cbds Store Malaga
+    # {"tag": "div", "class": "product-description ng-binding ng-scope ng-isolate-scope more-showing"}, # Icolorprint
+    # {"tag": "section", "class": "other-products hide-for-print alternating-backgrounds ng-scope"}, # Icolorprint
+    # {"tag": "div", "class": "tab-content tab-description"}, # Vioksport
+    # {"tag": "div", "class": "tab-pane fade in active"}, # La tienda de los minerales
+    # {"tag": "div", "class": "product-additional-info js-product-additional-info"}, # Juguetes Abracadabra
+    # {"tag": "div", "class": "description-wrapper"}, # Punt Love
+    # {"tag": "div", "class": "woocommerce-product-details__short-description"}, # Armitex
+    # {"tag": "div", "class": "woocommerce-product-details__short-description"}, # Cannacbdistribution
+    # {"tag": "div", "class": "woocommerce-Tabs-panel woocommerce-Tabs-panel--description panel entry-content wc-tab"}, # Cannacbdistribution
+    # {"tag": "safe-sticky", "class": "product-info"}, # IberoHemp
+    # {"tag": "div", "class": "iN0qUid7YkvVtAdak"}, # Fixelmovil
+    # {"tag": "div", "class": "descripcion-mobile"}, # Tienda Fetichista
+    # {"tag": "div", "class": "product-description"}, # Grow Industry
+    # {"tag": "div", "class": "product-tabs-wrapper"}, # Ecoeko
+    {"tag": "div", "class": "product__info-wrapper product__info-wrapper-media-left grid__item por"}, # Place for Pros
 ]
+
 DESCRIPTION_ID = ""
 MODIFY_DESCRIPTION = False
 DELETE_DESCRIPTION_CHARACTERS = ["---", "\\"]
 
 
 # Price config
-CHECK_PRICE = False
+CHECK_PRICE = True
 PRICE_TAGS = [
             # {"tag": "span", "class": "woocommerce-Price-amount amount"} # Worldshishas
             # {"tag": "span", "class": "product-price current-price-value"}, # Valkanik
@@ -168,9 +254,32 @@ PRICE_TAGS = [
             # {"tag": "span", "class": "current-price"}, # Luzeco
             # {"tag": "span", "id": "our_price_display"}, # Puertas Parachimeneas
             # {"tag": "p", "class": "price"}, # Puertas Parachimeneas
-            {"tag": "span", "class": "offer-price"}, # Puertas Parachimeneas
-
-
+            # {"tag": "span", "class": "offer-price"}, # Puertas Parachimeneas
+            # {"tag": "span", "class": "precioficha"}, # Trofeoutlet
+            # {"tag": "span", "class": "woocommerce-Price-amount amount"}, # skymedic
+            # {"tag": "div", "class": "price_custom"}, # Xuxes
+            # {"tag": "span", "class": "price"}, # Toot
+            # {"tag": "span", "class": "woocommerce-Price-amount amount"}, # Sensoriberia
+            # {"tag": "div", "class": "price-list"}, # Bronoir
+            # {"tag": "div", "class": "elementor-element elementor-element-0da8111 elementor-widget elementor-widget-text-editor"}, # Casas Rurales Maribel
+            # {"tag": "span", "class": "price"}, # Buenahierba
+            # {"tag": "div", "class": "elementor-element elementor-element-cf570f7 elementor-widget elementor-widget-woocommerce-product-etheme_price"}, # Onlycbdfans
+            # {"tag": "div", "class": "product-block product-block--price"}, # La catalana cbd
+            # {"tag": "div", "class": "elementor-element elementor-element-4656889b elementor-widget elementor-widget-woocommerce-product-price"}, # Cbds Store Malaga
+            # {"tag": "span", "class": "ng-binding ng-scope"}, # Icolorprint
+            # {"tag": "span", "class": "woocommerce-Price-amount amount"}, # Vioksport
+            # {"tag": "span", "class": "normal-price"}, # La tienda de los minerales
+            # {"tag": "span", "class": "product-price current-price-value"}, # Juguetes Abracadabra
+            # {"tag": "div", "class": "price"}, # Punt Love
+            # {"tag": "span", "class": "woocommerce-Price-amount amount"}, # Armitex
+            # {"tag": "p", "class": "price nasa-single-product-price"}, # Cannacbdistribution
+            # {"tag": "span", "class": "woocommerce-Price-amount amount"}, # The Good Shisha
+            # {"tag": "sale-price", "class": "text-lg text-on-sale"}, # IberoHemp
+            # {"tag": "h3", "class": "iktqanBlOqAyEqsFK"}, # Fixelmovil
+            # {"tag": "span", "id": "customprice"}, # Tienda Fetichista
+            # {"tag": "div", "class": "product-pricing"}, # Grow Industry
+            # {"tag": "p", "class": "price"}, # Ecoeko
+            {"tag": "div", "class": "price__sale ymq-b2b-current-product-price-parent-dom ymq-b2b-current-product-price-parent-dom2"}, # Place for Pros
             ]
 LOWER_PRICE = False
 
@@ -183,10 +292,22 @@ STOCK_TAGS = [
 STOCK_TEXT = "Consultar" # Worldshishas
 
 # TITLE FETCH BATCH SIZE
-CONCURRENT_REQUESTS = 10
+CONCURRENT_REQUESTS = 3
 
 # REQUEST TIMEOUT
 REQUEST_TIMEOUT = 20
+
+# PROXY CONFIGURATION
+USE_PROXIES = False  # Activar/desactivar uso de proxies globalmente (False por defecto - configurar proxies reales)
+AUTO_FETCH_PROXIES = False  # Obtener proxies automáticamente de fuentes gratuitas
+PROXY_UPDATE_INTERVAL = 3600  # Segundos entre actualizaciones de proxies (1 hora)
+
+# RATE LIMITING CONFIGURATION
+MIN_REQUEST_DELAY = 1.0  # Delay mínimo entre peticiones en segundos
+MAX_REQUEST_DELAY = 3.0  # Delay máximo entre peticiones en segundos
+BATCH_DELAY = 5.0  # Delay entre batches de peticiones en segundos
+RATE_LIMIT_BACKOFF_MULTIPLIER = 2.0  # Multiplicador para backoff en errores 429
+MAX_RATE_LIMIT_RETRIES = 5  # Máximo número de reintentos para errores 429
 
 
 

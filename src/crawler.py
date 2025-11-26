@@ -2,12 +2,201 @@ import os
 import asyncio
 import logging
 import aiohttp
+import random
+import time
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 from playwright.async_api import async_playwright
 from xml.etree import ElementTree as ET
 from lxml import etree as lxml_etree
 from aiohttp import ClientSession
+from CONFIG import USE_PROXIES, AUTO_FETCH_PROXIES
+from src.fetcher import rate_limiter, get_random_headers
+
+
+class ProxyManager:
+    """
+    Gestor de proxies rotativos para evitar bloqueos por IP
+    """
+    def __init__(self):
+        # Lista inicial de proxies (se puede actualizar dinámicamente)
+        self.proxies = self._load_initial_proxies()
+        self.current_proxy_index = 0
+        self.failed_proxies = set()
+        self.proxy_stats = {}
+        self.use_proxies = USE_PROXIES  # Configuración global para activar/desactivar proxies
+
+    def _load_initial_proxies(self):
+        """
+        Carga la lista inicial de proxies. En producción, esto debería conectarse
+        a un servicio de proxies o leer de un archivo/database.
+        """
+        # Lista de ejemplo - reemplazar con proxies reales o servicio de proxies
+        return [
+            # Proxies de ejemplo - reemplazar con proxies reales
+            # Formato: 'protocol://ip:port' o 'protocol://user:pass@ip:port'
+
+            # Proxies HTTP gratuitos (ejemplos - cambiar por reales)
+            'http://185.82.99.181:9091',
+            'http://45.77.56.51:3128',
+            'http://167.99.182.197:3128',
+            'http://198.199.120.102:3128',
+            'http://159.65.171.69:80',
+
+            # Proxies HTTPS (ejemplos)
+            'https://52.157.128.119:3128',
+            'https://20.206.106.192:3128',
+            'https://172.67.181.231:3128',
+
+            # Más proxies para mayor rotación
+            'http://47.254.47.51:8080',
+            'http://8.219.97.248:80',
+            'http://154.236.168.179:1981',
+            'http://102.68.128.50:1981',
+            'http://41.216.230.154:1981',
+        ]
+
+    def update_proxy_list(self, new_proxies):
+        """
+        Actualiza la lista de proxies dinámicamente
+        """
+        self.proxies = new_proxies
+        self.failed_proxies.clear()  # Limpiar lista negra al actualizar
+        self.current_proxy_index = 0
+        logging.info(f"Proxy list updated with {len(new_proxies)} proxies")
+
+    def add_proxy(self, proxy):
+        """
+        Agrega un proxy individual a la lista
+        """
+        if proxy not in self.proxies:
+            self.proxies.append(proxy)
+            logging.info(f"Added proxy: {proxy}")
+
+    def remove_proxy(self, proxy):
+        """
+        Remueve un proxy de la lista
+        """
+        if proxy in self.proxies:
+            self.proxies.remove(proxy)
+            if proxy in self.failed_proxies:
+                self.failed_proxies.remove(proxy)
+            logging.info(f"Removed proxy: {proxy}")
+
+    def enable_proxies(self):
+        """Activa el uso de proxies"""
+        self.use_proxies = True
+        logging.info("Proxy usage enabled")
+
+    def disable_proxies(self):
+        """Desactiva el uso de proxies"""
+        self.use_proxies = False
+        logging.info("Proxy usage disabled")
+
+    async def fetch_free_proxies(self, limit=20):
+        """
+        Obtiene proxies gratuitos de fuentes públicas
+        """
+        proxy_sources = [
+            'https://free-proxy-list.net/',
+            'https://www.us-proxy.org/',
+            'https://free-proxy-list.com/',
+        ]
+
+        found_proxies = []
+
+        try:
+            import aiohttp
+
+            for source_url in proxy_sources:
+                try:
+                    headers = get_random_headers()
+                    async with aiohttp.ClientSession(headers=headers) as session:
+                        async with session.get(source_url, timeout=10) as response:
+                            if response.status == 200:
+                                content = await response.text()
+                                # Extraer IPs y puertos usando regex simple
+                                import re
+                                ip_port_pattern = r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}):(\d{2,5})'
+                                matches = re.findall(ip_port_pattern, content)
+
+                                for ip, port in matches[:limit//len(proxy_sources)]:
+                                    proxy = f'http://{ip}:{port}'
+                                    if proxy not in found_proxies:
+                                        found_proxies.append(proxy)
+
+                except Exception as e:
+                    logging.warning(f"Error fetching proxies from {source_url}: {e}")
+                    continue
+
+        except ImportError:
+            logging.warning("aiohttp not available for fetching proxies")
+
+        if found_proxies:
+            self.update_proxy_list(found_proxies)
+            logging.info(f"Fetched {len(found_proxies)} free proxies")
+            return found_proxies
+        else:
+            logging.warning("No proxies found from free sources")
+            return []
+
+    def get_next_proxy(self):
+        """
+        Obtiene el siguiente proxy disponible rotando cíclicamente
+        """
+        if not self.proxies:
+            logging.warning("No hay proxies disponibles, usando conexión directa")
+            return None
+
+        # Filtrar proxies que no hayan fallado recientemente
+        available_proxies = [p for p in self.proxies if p not in self.failed_proxies]
+
+        if not available_proxies:
+            logging.warning("Todos los proxies han fallado, reiniciando lista de proxies fallidos")
+            self.failed_proxies.clear()
+            available_proxies = self.proxies
+
+        # Rotar al siguiente proxy
+        proxy = available_proxies[self.current_proxy_index % len(available_proxies)]
+        self.current_proxy_index += 1
+
+        # Actualizar estadísticas
+        if proxy not in self.proxy_stats:
+            self.proxy_stats[proxy] = {'success': 0, 'fail': 0, 'last_used': None}
+        self.proxy_stats[proxy]['last_used'] = time.time()
+
+        logging.debug(f"Usando proxy: {proxy}")
+        return proxy
+
+    def mark_proxy_success(self, proxy):
+        """Marca un proxy como exitoso"""
+        if proxy and proxy in self.proxy_stats:
+            self.proxy_stats[proxy]['success'] += 1
+            # Si un proxy que falló anteriormente funciona, lo removemos de la lista negra
+            if proxy in self.failed_proxies:
+                self.failed_proxies.remove(proxy)
+                logging.info(f"Proxy {proxy} recuperado y removido de lista negra")
+
+    def mark_proxy_failed(self, proxy):
+        """Marca un proxy como fallido"""
+        if proxy and proxy in self.proxy_stats:
+            self.proxy_stats[proxy]['fail'] += 1
+            self.failed_proxies.add(proxy)
+            logging.warning(f"Proxy {proxy} marcado como fallido")
+
+    def get_proxy_stats(self):
+        """Obtiene estadísticas de uso de proxies"""
+        return self.proxy_stats
+
+    def should_use_proxy(self):
+        """
+        Decide si usar proxy basado en configuración y disponibilidad
+        """
+        return self.use_proxies and bool(self.proxies and len(self.proxies) > 0)
+
+
+# Instancia global del gestor de proxies
+proxy_manager = ProxyManager()
 
 # Configuración (asegúrate de que estas variables estén definidas)
 IGNORE_URLS_WITH = []
@@ -15,6 +204,130 @@ USE_RATE_LIMIT = False
 REQUEST_TIMEOUT = 10  # Puedes ajustar el tiempo de espera según tus necesidades
 MAX_SITEMAPS = 5  # Número máximo de sitemaps a procesar recursivamente
 MAX_URLS = 200  # Máximo de URLs a procesar
+
+
+def get_random_headers():
+    """
+    Genera headers aleatorios para evitar bloqueos por rate limiting con amplia variedad de user-agents
+    """
+    user_agents = [
+        # Chrome Desktop - Windows
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+
+        # Chrome Desktop - macOS
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+
+        # Chrome Desktop - Linux
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+
+        # Firefox Desktop
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/120.0",
+        "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/120.0",
+
+        # Safari Desktop
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+
+        # Edge Desktop
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Edg/118.0.2088.76",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36 Edg/117.0.2045.47",
+
+        # Chrome Mobile - Android
+        "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 12; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36",
+
+        # Safari Mobile - iOS
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (iPad; CPU OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
+
+        # Samsung Internet
+        "Mozilla/5.0 (Linux; Android 10; SM-G973F) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/18.0 Chrome/99.0.4844.88 Mobile Safari/537.36",
+        "Mozilla/5.0 (Linux; Android 11; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/17.0 Chrome/96.0.4664.104 Mobile Safari/537.36",
+
+        # Opera Desktop
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 OPR/105.0.0.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 OPR/104.0.0.0",
+
+        # Vivaldi
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Vivaldi/6.5",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Vivaldi/6.4",
+
+        # Brave
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Brave/119",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36 Brave/118",
+    ]
+
+    accept_languages = [
+        "es-ES,es;q=0.9,en;q=0.8",
+        "es-ES,es;q=0.9",
+        "es,en;q=0.9,en-US;q=0.8",
+        "es-ES,es;q=0.9,*;q=0.5",
+        "es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7",
+        "es-MX,es;q=0.9,en;q=0.8",
+        "es-AR,es;q=0.9,en;q=0.8",
+        "es-CO,es;q=0.9,en;q=0.8",
+        "es-CL,es;q=0.9,en;q=0.8",
+        "es-PE,es;q=0.9,en;q=0.8"
+    ]
+
+    # Headers adicionales aleatorios para mayor variabilidad
+    additional_headers = {}
+    if random.choice([True, False]):
+        additional_headers['Cache-Control'] = random.choice(['no-cache', 'max-age=0'])
+    if random.choice([True, False]):
+        additional_headers['Pragma'] = 'no-cache'
+    if random.choice([True, False]):
+        additional_headers['Sec-Fetch-Dest'] = random.choice(['document', 'empty'])
+    if random.choice([True, False]):
+        additional_headers['Sec-Fetch-Mode'] = random.choice(['navigate', 'cors'])
+    if random.choice([True, False]):
+        additional_headers['Sec-Fetch-Site'] = random.choice(['none', 'cross-site'])
+
+    base_headers = {
+        'User-Agent': random.choice(user_agents),
+        'Accept-Language': random.choice(accept_languages),
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Referer': random.choice([
+            'https://www.google.com/',
+            'https://www.bing.com/',
+            'https://duckduckgo.com/',
+            'https://search.yahoo.com/',
+            '',
+        ]),
+        'DNT': '1',
+    }
+
+    # Combinar headers base con adicionales
+    base_headers.update(additional_headers)
+    return base_headers
+
+
+def create_session_with_random_headers():
+    """
+    Crea una sesión aiohttp con headers rotativos
+    """
+    return aiohttp.ClientSession(headers=get_random_headers())
 
 async def fetch_links_with_playwright(url):
     """
@@ -170,13 +483,62 @@ class Crawler:
         """
         Verifica si una URL existe (respuesta 200).
         """
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.head(url, timeout=10) as response:
-                    return response.status == 200
-        except Exception as e:
-            logging.error(f"Error checking URL {url}: {e}")
-            return False
+        from CONFIG import MAX_RATE_LIMIT_RETRIES, RATE_LIMIT_BACKOFF_MULTIPLIER
+        max_retries = MAX_RATE_LIMIT_RETRIES
+
+        for attempt in range(1, max_retries + 1):
+            # Aplicar rate limiting antes de cualquier petición
+            await rate_limiter.wait_if_needed()
+
+            proxy = None
+            if proxy_manager.should_use_proxy():
+                proxy = proxy_manager.get_next_proxy()
+
+            try:
+                headers = get_random_headers() if attempt == 1 else get_random_headers()
+
+                async with aiohttp.ClientSession(headers=headers) as session:
+                    async with session.head(url, timeout=10, proxy=proxy) as response:
+                        if response.status == 200:
+                            proxy_manager.mark_proxy_success(proxy)
+                            from src.fetcher import consecutive_429_errors
+                            consecutive_429_errors = 0  # Resetear contador en petición exitosa
+                            return True
+                        elif response.status == 429:
+                            from CONFIG import MAX_RATE_LIMIT_RETRIES, RATE_LIMIT_BACKOFF_MULTIPLIER
+                            from src.fetcher import consecutive_429_errors, proxy_manager as fetcher_proxy_manager
+
+                            consecutive_429_errors += 1
+                            logging.warning(f"Rate limit exceeded (429) checking URL {url}. Attempt {attempt} of {MAX_RATE_LIMIT_RETRIES}. Consecutive 429 errors: {consecutive_429_errors}")
+
+                            # Activar proxies automáticamente si hay muchos errores 429
+                            fetcher_proxy_manager.auto_enable_proxies_on_rate_limit(consecutive_429_errors)
+
+                            if attempt < MAX_RATE_LIMIT_RETRIES:
+                                # Generar nuevos headers aleatorios
+                                new_headers = get_random_headers()
+                                logging.info(f"New headers for retry: User-Agent: {new_headers['User-Agent']}")
+                                # Esperar con backoff exponencial mejorado para rate limit
+                                delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
+                                logging.info(f"Rate limit detected. Retrying URL check with new headers in {delay:.2f} seconds...")
+                                await asyncio.sleep(delay)
+                                # Aplicar rate limiting adicional antes del retry
+                                await rate_limiter.wait_if_needed()
+                                continue
+                            else:
+                                logging.error(f"Failed to check URL {url} after {MAX_RATE_LIMIT_RETRIES} attempts due to 429 Rate Limit.")
+                                return False
+                        else:
+                            proxy_manager.mark_proxy_failed(proxy)
+                            return False
+            except aiohttp.ClientHttpProxyError as e:
+                proxy_manager.mark_proxy_failed(proxy)
+                logging.error(f"Proxy error checking URL {url} (proxy: {proxy}): {e}")
+                return False
+            except Exception as e:
+                proxy_manager.mark_proxy_failed(proxy)
+                logging.error(f"Error checking URL {url} (proxy: {proxy}): {e}")
+                return False
 
     async def get_all_urls_by_crawling(self):
         semaphore = asyncio.Semaphore(self.concurrent_requests)
@@ -210,12 +572,30 @@ class Crawler:
 
                         logging.info(f"Procesando URL: {normalized_url}")
                         try:
-                            async with session.get(normalized_url, headers=self.headers, timeout=REQUEST_TIMEOUT) as response:
+                            # Aplicar rate limiting antes de la petición
+                            await rate_limiter.wait_if_needed()
+
+                            # Usar headers aleatorios y proxies para cada request
+                            headers = get_random_headers()
+                            proxy = proxy_manager.get_next_proxy() if proxy_manager.should_use_proxy() else None
+                            async with session.get(normalized_url, headers=headers, timeout=REQUEST_TIMEOUT, proxy=proxy) as response:
                                 logging.info(f"Estado {response.status} recibido para: {normalized_url}")
 
-                                if response.status == 200:
+                                if response.status == 429:
+                                    from src.fetcher import consecutive_429_errors, proxy_manager as fetcher_proxy_manager
+                                    consecutive_429_errors += 1
+                                    proxy_manager.mark_proxy_failed(proxy)
+                                    fetcher_proxy_manager.auto_enable_proxies_on_rate_limit(consecutive_429_errors)
+                                    logging.warning(f"Rate limit exceeded (429) for URL {normalized_url}. Consecutive 429 errors: {consecutive_429_errors}. Skipping.")
+                                    continue
+                                elif response.status == 200:
                                     content = await response.text()
                                     soup = BeautifulSoup(content, "html.parser")
+
+                                    # Marcar proxy como exitoso
+                                    proxy_manager.mark_proxy_success(proxy)
+                                    from src.fetcher import consecutive_429_errors
+                                    consecutive_429_errors = 0  # Resetear contador en petición exitosa
 
                                     # Extraer enlaces del HTML
                                     links_found = 0
@@ -265,12 +645,18 @@ class Crawler:
                                             else:
                                                 logging.debug(f"Skipping JS URL from different domain: {full_js_link}")
 
+                        except aiohttp.ClientHttpProxyError as e:
+                            proxy_manager.mark_proxy_failed(proxy)
+                            logging.error(f"Proxy error procesando {normalized_url} (proxy: {proxy}): {e}")
                         except Exception as e:
-                            logging.error(f"Error procesando {normalized_url}: {e}")
+                            proxy_manager.mark_proxy_failed(proxy)
+                            logging.error(f"Error procesando {normalized_url} (proxy: {proxy}): {e}")
                 finally:
                     self.urls_to_visit.task_done()
 
-        async with aiohttp.ClientSession(headers=self.headers) as session:
+        # Usar headers rotativos para cada sesión
+        session_headers = get_random_headers()
+        async with aiohttp.ClientSession(headers=session_headers) as session:
             # Sembrar la cola con la URL inicial
             await self.urls_to_visit.put(self.domain)
 
@@ -302,27 +688,73 @@ class Crawler:
         Busca el archivo robots.txt en el dominio y extrae la URL del sitemap.
         """
         robots_url = f"{self.domain}/robots.txt"
-        try:
-            async with ClientSession(headers=self.headers) as session:
-                async with session.get(robots_url, timeout=10) as response:
-                    if response.status == 200:
-                        robots_content = await response.text()
-                        sitemap_url = self.extract_sitemap_from_robots(robots_content)
-                        if sitemap_url:
-                            logging.info(f"Sitemap encontrado en robots.txt: {sitemap_url}")
-                            return sitemap_url
-                        else:
-                            logging.info("No se encontró ninguna directiva Sitemap en robots.txt.")
+        max_retries = 3
+
+        for attempt in range(1, max_retries + 1):
+            # Aplicar rate limiting antes de cualquier petición
+            await rate_limiter.wait_if_needed()
+
+            proxy = None
+            if proxy_manager.should_use_proxy():
+                proxy = proxy_manager.get_next_proxy()
+
+            try:
+                # Usar headers aleatorios para el primer intento, y rotar en reintentos por 429
+                headers = get_random_headers() if attempt == 1 else get_random_headers()
+
+                async with ClientSession(headers=headers) as session:
+                    async with session.get(robots_url, timeout=10, proxy=proxy) as response:
+                        if response.status == 200:
+                            robots_content = await response.text()
+                            sitemap_url = self.extract_sitemap_from_robots(robots_content)
+                            # Marcar proxy como exitoso
+                            proxy_manager.mark_proxy_success(proxy)
+                            from src.fetcher import consecutive_429_errors
+                            consecutive_429_errors = 0  # Resetear contador en petición exitosa
+                            if sitemap_url:
+                                logging.info(f"Sitemap encontrado en robots.txt: {sitemap_url}")
+                                return sitemap_url
+                            else:
+                                logging.info("No se encontró ninguna directiva Sitemap en robots.txt.")
+                                return None
+                        elif response.status == 403:
+                            logging.warning("Acceso prohibido a robots.txt (403). Intentando sin robots.txt.")
                             return None
-                    elif response.status == 403:
-                        logging.warning("Acceso prohibido a robots.txt (403). Intentando sin robots.txt.")
-                        return None
-                    else:
-                        logging.warning(f"No se pudo obtener robots.txt, estado HTTP: {response.status}")
-                        return None
-        except Exception as e:
-            logging.error(f"Error al obtener robots.txt: {e}")
-            return None
+                        elif response.status == 429:
+                            from CONFIG import MAX_RATE_LIMIT_RETRIES, RATE_LIMIT_BACKOFF_MULTIPLIER
+                            from src.fetcher import consecutive_429_errors, proxy_manager as fetcher_proxy_manager
+
+                            consecutive_429_errors += 1
+                            logging.warning(f"Rate limit exceeded (429) for robots.txt. Attempt {attempt} of {MAX_RATE_LIMIT_RETRIES}. Consecutive 429 errors: {consecutive_429_errors}")
+
+                            # Activar proxies automáticamente si hay muchos errores 429
+                            fetcher_proxy_manager.auto_enable_proxies_on_rate_limit(consecutive_429_errors)
+
+                            if attempt < MAX_RATE_LIMIT_RETRIES:
+                                # Generar nuevos headers aleatorios
+                                new_headers = get_random_headers()
+                                logging.info(f"New headers for retry: User-Agent: {new_headers['User-Agent']}")
+                                # Esperar con backoff exponencial mejorado para rate limit
+                                delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
+                                logging.info(f"Rate limit detected. Retrying robots.txt with new headers in {delay:.2f} seconds...")
+                                await asyncio.sleep(delay)
+                                # Aplicar rate limiting adicional antes del retry
+                                await rate_limiter.wait_if_needed()
+                                continue
+                            else:
+                                logging.error(f"Failed to fetch robots.txt after {MAX_RATE_LIMIT_RETRIES} attempts due to 429 Rate Limit.")
+                                return None
+                        else:
+                            logging.warning(f"No se pudo obtener robots.txt, estado HTTP: {response.status}")
+                            return None
+            except aiohttp.ClientHttpProxyError as e:
+                proxy_manager.mark_proxy_failed(proxy)
+                logging.error(f"Proxy error obteniendo robots.txt (proxy: {proxy}): {e}")
+                return None
+            except Exception as e:
+                proxy_manager.mark_proxy_failed(proxy)
+                logging.error(f"Error al obtener robots.txt (proxy: {proxy}): {e}")
+                return None
 
     def parse_sitemap_xml(self, content, sitemap_url):
         """
@@ -402,6 +834,124 @@ class Crawler:
 
         return secondary_sitemaps
 
+    def is_xml_content(self, content):
+        """
+        Verifica si el contenido es XML puro o contiene elementos HTML/JS.
+        """
+        content_lower = content.lower().strip()
+        # Si contiene elementos HTML típicos, no es XML puro
+        html_indicators = ['<html', '<head', '<body', '<script', '<style', '<div', '<!doctype']
+        return not any(indicator in content_lower for indicator in html_indicators)
+
+    async def fetch_sitemap_content(self, sitemap_url):
+        """
+        Obtiene el contenido del sitemap, usando Playwright si es necesario para sitios JavaScript-driven.
+        """
+        from CONFIG import MAX_RATE_LIMIT_RETRIES
+        max_retries = MAX_RATE_LIMIT_RETRIES
+
+        for attempt in range(1, max_retries + 1):
+            # Aplicar rate limiting antes de cualquier petición
+            await rate_limiter.wait_if_needed()
+
+            proxy = None
+            if proxy_manager.should_use_proxy():
+                proxy = proxy_manager.get_next_proxy()
+
+            try:
+                # Usar headers aleatorios para el primer intento, y rotar en reintentos por 429
+                headers = get_random_headers() if attempt == 1 else get_random_headers()
+
+                # Primero intentar con HTTP normal
+                async with ClientSession(headers=headers) as session:
+                    async with session.get(sitemap_url, timeout=10, proxy=proxy) as response:
+                        if response.status == 200:
+                            content = await response.text()
+                            if self.is_xml_content(content):
+                                proxy_manager.mark_proxy_success(proxy)
+                                from src.fetcher import consecutive_429_errors
+                                consecutive_429_errors = 0  # Resetear contador en petición exitosa
+                                logging.info(f"Successfully fetched XML sitemap with HTTP: {sitemap_url}")
+                                return content
+                            else:
+                                proxy_manager.mark_proxy_success(proxy)
+                                from src.fetcher import consecutive_429_errors
+                                consecutive_429_errors = 0  # Resetear contador en petición exitosa
+                                logging.warning(f"Sitemap contains HTML/JS content, trying with Playwright: {sitemap_url}")
+                                break  # Salir del bucle de reintentos para intentar con Playwright
+                        elif response.status == 429:
+                            from CONFIG import MAX_RATE_LIMIT_RETRIES, RATE_LIMIT_BACKOFF_MULTIPLIER
+                            from src.fetcher import consecutive_429_errors, proxy_manager as fetcher_proxy_manager
+
+                            consecutive_429_errors += 1
+                            logging.warning(f"Rate limit exceeded (429) for sitemap {sitemap_url}. Attempt {attempt} of {MAX_RATE_LIMIT_RETRIES}. Consecutive 429 errors: {consecutive_429_errors}")
+
+                            # Activar proxies automáticamente si hay muchos errores 429
+                            fetcher_proxy_manager.auto_enable_proxies_on_rate_limit(consecutive_429_errors)
+
+                            if attempt < MAX_RATE_LIMIT_RETRIES:
+                                # Generar nuevos headers aleatorios
+                                new_headers = get_random_headers()
+                                logging.info(f"New headers for retry: User-Agent: {new_headers['User-Agent']}")
+                                # Esperar con backoff exponencial mejorado para rate limit
+                                delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
+                                logging.info(f"Rate limit detected. Retrying sitemap fetch with new headers in {delay:.2f} seconds...")
+                                await asyncio.sleep(delay)
+                                # Aplicar rate limiting adicional antes del retry
+                                await rate_limiter.wait_if_needed()
+                                continue
+                            else:
+                                logging.warning(f"HTTP request failed with status 429 after retries, trying with Playwright: {sitemap_url}")
+                                break  # Salir del bucle para intentar con Playwright
+                        else:
+                            logging.warning(f"HTTP request failed with status {response.status}, trying with Playwright: {sitemap_url}")
+                            break  # Salir del bucle para intentar con Playwright
+            except aiohttp.ClientHttpProxyError as e:
+                proxy_manager.mark_proxy_failed(proxy)
+                logging.warning(f"Proxy error fetching sitemap {sitemap_url} (proxy: {proxy}): {e}, trying with Playwright")
+                break  # Salir del bucle para intentar con Playwright
+            except Exception as e:
+                proxy_manager.mark_proxy_failed(proxy)
+                logging.warning(f"HTTP request failed: {e}, trying with Playwright: {sitemap_url}")
+                break  # Salir del bucle para intentar con Playwright
+
+        # Si HTTP falló o devolvió HTML, usar Playwright
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+                await page.goto(sitemap_url)
+                content = await page.content()
+                await browser.close()
+
+                # Extraer solo el contenido XML del HTML si es necesario
+                if not self.is_xml_content(content):
+                    # Intentar encontrar el XML dentro del HTML
+                    soup = BeautifulSoup(content, 'html.parser')
+                    # Buscar elementos que contengan XML
+                    pre_elements = soup.find_all('pre')
+                    if pre_elements:
+                        for pre in pre_elements:
+                            if self.is_xml_content(pre.text):
+                                logging.info(f"Extracted XML content from HTML pre tag for: {sitemap_url}")
+                                return pre.text
+
+                    # Si no hay pre tags, buscar en el body
+                    body = soup.find('body')
+                    if body and self.is_xml_content(body.text):
+                        logging.info(f"Extracted XML content from HTML body for: {sitemap_url}")
+                        return body.text
+
+                    # Si nada funciona, devolver el contenido tal cual pero loggear la issue
+                    logging.warning(f"Could not extract clean XML from HTML content for: {sitemap_url}")
+
+                logging.info(f"Successfully fetched sitemap with Playwright: {sitemap_url}")
+                return content
+
+        except Exception as e:
+            logging.error(f"Error fetching sitemap with Playwright {sitemap_url}: {e}")
+            return None
+
     async def get_urls_from_sitemap_recursive(self, sitemap_url, depth=0):
         """
         Procesa un sitemap de forma recursiva para extraer URLs. Si un sitemap contiene otros sitemaps,
@@ -414,43 +964,40 @@ class Crawler:
 
         try:
             logging.info(f"Fetching sitemap: {sitemap_url}")
-            async with ClientSession(headers=self.headers) as session:
-                async with session.get(sitemap_url, timeout=10) as response:
-                    if response.status == 200:
-                        content = await response.text()
+            content = await self.fetch_sitemap_content(sitemap_url)
 
-                        # Intentar parsear el XML con diferentes métodos
-                        root, parser_name = self.parse_sitemap_xml(content, sitemap_url)
+            if content is None:
+                logging.error(f"Could not fetch content for sitemap {sitemap_url}")
+                return []
 
-                        if root is None:
-                            logging.error(f"Could not parse sitemap {sitemap_url} with any parser. Skipping.")
-                            return []
+            # Intentar parsear el XML con diferentes métodos
+            root, parser_name = self.parse_sitemap_xml(content, sitemap_url)
 
-                        # Extraer URLs del XML parseado
-                        urls = self.extract_urls_from_parsed_xml(root, parser_name)
+            if root is None:
+                logging.error(f"Could not parse sitemap {sitemap_url} with any parser. Skipping.")
+                return []
 
-                        # Extraer URLs de sitemaps secundarios
-                        secondary_sitemap_urls = self.extract_secondary_sitemaps(root, parser_name)
+            # Extraer URLs del XML parseado
+            urls = self.extract_urls_from_parsed_xml(root, parser_name)
 
-                        all_sitemaps = []
+            # Extraer URLs de sitemaps secundarios
+            secondary_sitemap_urls = self.extract_secondary_sitemaps(root, parser_name)
 
-                        # Si encontramos URLs, agregarlas al resultado
-                        if urls:
-                            all_sitemaps.append({'sitemap': sitemap_url, 'urls': urls})
+            all_sitemaps = []
 
-                        # Manejo recursivo de sitemaps secundarios
-                        for secondary_url in secondary_sitemap_urls:
-                            logging.info(f"Found secondary sitemap: {secondary_url}")
-                            secondary_sitemaps = await self.get_urls_from_sitemap_recursive(secondary_url, depth + 1)
-                            all_sitemaps.extend(secondary_sitemaps)
+            # Si encontramos URLs, agregarlas al resultado
+            if urls:
+                all_sitemaps.append({'sitemap': sitemap_url, 'urls': urls})
 
-                        return all_sitemaps
-                    elif response.status == 403:
-                        logging.warning(f"Access to {sitemap_url} is forbidden (403).")
-                    else:
-                        logging.error(f"Failed to fetch sitemap: {sitemap_url}, Status Code: {response.status}")
-                    return []
+            # Manejo recursivo de sitemaps secundarios
+            for secondary_url in secondary_sitemap_urls:
+                logging.info(f"Found secondary sitemap: {secondary_url}")
+                secondary_sitemaps = await self.get_urls_from_sitemap_recursive(secondary_url, depth + 1)
+                all_sitemaps.extend(secondary_sitemaps)
+
+            return all_sitemaps
+
         except Exception as e:
-            logging.error(f"Error fetching sitemap {sitemap_url}: {e}")
+            logging.error(f"Error processing sitemap {sitemap_url}: {e}")
             return []
 
