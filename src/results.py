@@ -13,25 +13,16 @@ class ResultsManager:
         self.results_folder = os.path.join('results', self.domain_name, f'execution_{execution_number}')
         os.makedirs(self.results_folder, exist_ok=True)
 
-        # Files for products with stock
-        self.results_file_with_stock = os.path.join(self.results_folder, 'products.xlsx')
-        self.products_with_stock = []
-
-        # Now assign results_file after defining results_file_with_stock
-        self.results_file = self.results_file_with_stock  # For logging
-
-        # Files for products without stock
-        self.results_file_without_stock = os.path.join(self.results_folder, 'products_without_stock.xlsx')
-        self.products_without_stock = []
+        # Files for products
+        self.results_file = os.path.join(self.results_folder, 'products.xlsx')
+        self.products = []
 
         # File for discarded products (without price)
         self.discarded_file = os.path.join(self.results_folder, 'discarded_products.txt')
         self.discarded_products = []
 
-        self.total_products_with_stock = 0
-        self.total_products_without_stock = 0
-        self.total_discarded_products = 0
         self.total_products = 0
+        self.total_discarded_products = 0
         self.seen_titles = []
 
         # Copy CONFIG.py to the results folder
@@ -48,34 +39,19 @@ class ResultsManager:
         from urllib.parse import urlparse
         return urlparse(url).netloc.replace("www.", "")
 
-    def append_results(self, in_stock_products, without_stock_products, discarded_products):
-        for product in in_stock_products:
-            self.append_product_with_stock(product)
-
-        for product in without_stock_products:
-            self.append_product_without_stock(product)
+    def append_results(self, products, discarded_products):
+        for product in products:
+            self.append_product(product)
 
         for product in discarded_products:
             self.append_discarded_product(product['title'], product['url'])
 
-    def append_product_with_stock(self, product):
+    def append_product(self, product):
         if product['title'] not in self.seen_titles:
-            self.products_with_stock.append(product)
+            self.products.append(product)
             self.seen_titles.append(product['title'])
             self.save_to_txt(product, 'products.txt')
-            self.save_to_excel(product, self.results_file_with_stock)
-            self.total_products_with_stock += 1
-            self.total_products += 1
-        else:
-            logging.info(f"Duplicate product found and skipped: {product['title']}")
-
-    def append_product_without_stock(self, product):
-        if product['title'] not in self.seen_titles:
-            self.products_without_stock.append(product)
-            self.seen_titles.append(product['title'])
-            self.save_to_txt(product, 'products_without_stock.txt')
-            self.save_to_excel(product, self.results_file_without_stock)
-            self.total_products_without_stock += 1
+            self.save_to_excel(product, self.results_file)
             self.total_products += 1
         else:
             logging.info(f"Duplicate product found and skipped: {product['title']}")
@@ -171,10 +147,8 @@ class ResultsManager:
         """
         Save all results before finishing the process.
         """
-        if self.products_with_stock:
-            self.save_to_excel_bulk(self.products_with_stock, self.results_file_with_stock)
-        if self.products_without_stock:
-            self.save_to_excel_bulk(self.products_without_stock, self.results_file_without_stock)
+        if self.products:
+            self.save_to_excel_bulk(self.products, self.results_file)
         if self.discarded_products:
             self.save_discarded_products()
 

@@ -4,7 +4,7 @@ import time
 import random
 from bs4 import BeautifulSoup
 import aiohttp
-from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, LOWER_PRICE, CHECK_STOCK, STOCK_TAGS, STOCK_TEXT, OG_IMAGE, OG_DESCRIPTION, OG_TITLE, REQUEST_TIMEOUT, TITLE_SEPARATORS, MODIFY_DESCRIPTION, DESCRIPTION_ID, DELETE_DESCRIPTION_CHARACTERS, CHECK_PRICE, IMAGE_IDS, ROOT_URL, MODIFY_IMAGE_URL, CUSTOM_IMAGE_PATTERN
+from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, LOWER_PRICE, OG_IMAGE, OG_DESCRIPTION, OG_TITLE, REQUEST_TIMEOUT, TITLE_SEPARATORS, MODIFY_DESCRIPTION, DELETE_DESCRIPTION_CHARACTERS, CHECK_PRICE, IMAGE_IDS, ROOT_URL
 import re
 from markdownify import markdownify as md
 import re
@@ -530,8 +530,9 @@ import re
 
 def extract_prices(text):
     """
-    Extrae todos los precios del texto, devolviendo una lista de precios numéricos.
-    Detecta tanto precios con '€' delante como detrás del número.
+    Extrae todos los precios del texto, devolviendo una lista de tuplas (precio, moneda).
+    Detecta tanto precios con '€', '$', 'USD' delante como detrás del número.
+    Maneja formatos europeos (1.234,56) y americanos (1,234.56).
     """
     # Limpiar el texto de entidades HTML y caracteres especiales
     import html
@@ -540,44 +541,110 @@ def extract_prices(text):
     # Reemplazar múltiples espacios por uno solo
     text = re.sub(r'\s+', ' ', text).strip()
 
-    # Expresión regular más robusta para detectar precios
-    # Busca patrones como: 17,90 €, €17,90, 17.90€, etc.
-    price_patterns = [
-        r'(\d{1,3}(?:\.\d{3})*(?:,\d+)?)\s*€',  # 17,90 €
-        r'€\s*(\d{1,3}(?:\.\d{3})*(?:,\d+)?)',  # €17,90
-        r'(\d{1,3}(?:\.\d{3})*(?:,\d+)?)€',     # 17,90€
-        r'(\d{1,3}(?:\.\d{3})*(?:,\d+)?)',      # 17,90 (sin símbolo)
+    prices = []
+
+    # Patrones para formato Europeo (1.234,56) - Prioridad para €
+    # Ej: 1.234,56 € | € 1.234,56
+    eu_patterns = [
+        (r'(\d{1,3}(?:\.\d{3})*(?:,\d+)?)\s*€', '€'),
+        (r'€\s*(\d{1,3}(?:\.\d{3})*(?:,\d+)?)', '€'),
+        (r'(\d{1,3}(?:\.\d{3})*(?:,\d+)?)€', '€'),
     ]
 
-    prices = []
-    for pattern in price_patterns:
+    # Patrones para formato Americano (1,234.56) - Prioridad para $ y USD
+    # Ej: $ 1,234.56 | 1,234.56 $ | USD 1,234.56
+    us_patterns = [
+        (r'\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)', '$'),       # $ 1,234.56
+        (r'(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*\$', '$'),       # 1,234.56 $
+        (r'USD\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)', 'USD'),      # USD 1,234.56
+        (r'(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\s*USD', 'USD'),      # 1,234.56 USD
+        (r'US\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)', 'USD'),     # US$ 1,234.56
+    ]
+
+    # Patrón genérico (sin símbolo) - Ambigüedad
+    generic_pattern = r'(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?)'
+
+    # 1. Buscar coincidencias explícitas EU (coma decimal)
+    for pattern, currency in eu_patterns:
         matches = re.findall(pattern, text)
-        prices.extend(matches)
+        for m in matches:
+            # Limpiar: quitar puntos de miles, cambiar coma a punto
+            clean_val = m.replace('.', '').replace(',', '.')
+            try:
+                val = float(clean_val)
+                prices.append((val, currency))
+            except ValueError:
+                pass
 
-    # Eliminar duplicados
-    prices = list(set(prices))
+    # 2. Buscar coincidencias explícitas US (punto decimal)
+    for pattern, currency in us_patterns:
+        matches = re.findall(pattern, text)
+        for m in matches:
+            # Limpiar: quitar comas de miles
+            clean_val = m.replace(',', '')
+            try:
+                val = float(clean_val)
+                prices.append((val, currency))
+            except ValueError:
+                pass
+    
+    # 3. Si no encontramos nada con símbolos, intentar búsqueda genérica
+    if not prices:
+        # Buscamos números "sueltos" que parezcan precios
+        matches = re.findall(generic_pattern, text)
+        for m in matches:
+            val = None
+            currency = '€' # Default fallback if no symbol found, or maybe None?
+            # Let's assume € for generic if ambiguous, or try to detect context?
+            # For now, defaulting to € as per original behavior which assumed €
+            
+            if ',' in m and '.' in m:
+                last_comma = m.rfind(',')
+                last_dot = m.rfind('.')
+                if last_comma > last_dot: # Formato EU: 1.234,56
+                    clean_val = m.replace('.', '').replace(',', '.')
+                    try: val = float(clean_val)
+                    except: pass
+                else: # Formato US: 1,234.56
+                    clean_val = m.replace(',', '')
+                    try: val = float(clean_val)
+                    except: pass
+                    currency = '$' # If it looks like US format, maybe default to $?
+            elif ',' in m: # Solo comas: 17,90 o 1,234
+                clean_val = m.replace(',', '.')
+                try: val = float(clean_val)
+                except: pass
+            elif '.' in m: # Solo puntos: 17.90 o 1.234
+                if re.search(r'\.\d{2}$', m):
+                     try: val = float(m)
+                     except: pass
+                     currency = '$' # Likely US format
+            
+            if val is not None:
+                prices.append((val, currency))
 
-    price_values = []
-    for p in prices:
-        # Eliminar los puntos (separadores de miles)
-        p_no_thousand_sep = p.replace('.', '')
-        # Reemplazar la coma decimal por punto
-        p_standard = p_no_thousand_sep.replace(',', '.')
-        try:
-            price_value = float(p_standard)
-            # Solo incluir precios razonables (mayores a 0.01 y menores a 100000)
-            if 0.01 <= price_value <= 100000:
-                price_values.append(price_value)
-        except ValueError:
-            continue  # Omitir si no se puede convertir a float
-    return price_values
+    # Eliminar duplicados manteniendo el orden
+    seen = set()
+    prices = [x for x in prices if not (x in seen or seen.add(x))]
+    
+    final_prices = []
+    for p, c in prices:
+        if 0.01 <= p <= 100000:
+            final_prices.append((p, c))
+            
+    return final_prices
 
 
-def format_price(price_value):
+def format_price(price_value, currency='€'):
     """
-    Da formato al precio para que tenga el formato '0,00€'.
+    Da formato al precio para que tenga el formato '0,00€' o '$0.00' según la moneda.
     """
-    return f"{price_value:.2f}".replace('.', ',') + "€"
+    if currency in ['$', 'USD']:
+        return f"${price_value:.2f}"
+    else:
+        return f"{price_value:.2f}".replace('.', ',') + currency
+
+
 
 def format_description(description):
     if not description:
@@ -732,8 +799,7 @@ def fetch_product_details_from_soup(soup):
             img_tag = soup.find("img", id=img_id)
             if img_tag:
                 image = img_tag.get("src", "").strip()
-                if MODIFY_IMAGE_URL and image.startswith("../../../"):
-                    image = ROOT_URL + image.replace("../../../", "")
+
 
                 if image:
                     break
@@ -792,25 +858,7 @@ def fetch_product_details_from_soup(soup):
                         break
 
     # Prioridad 5: Custom pattern - buscar imágenes con patrón configurable
-    if not image and CUSTOM_IMAGE_PATTERN:
-        custom_images = soup.find_all('img', src=lambda x: x and CUSTOM_IMAGE_PATTERN in x)
-        if custom_images:
-            # Tomar la primera imagen que contenga información relevante en alt/title
-            for img in custom_images:
-                alt_text = img.get('alt', '').strip()
-                title_text = img.get('title', '').strip()
-                src_url = img.get('src', '').strip()
 
-                # Priorizar imágenes que tengan texto descriptivo en alt o title
-                if alt_text or title_text:
-                    image = src_url
-                    logging.info(f"Imagen encontrada via patrón personalizado '{CUSTOM_IMAGE_PATTERN}': {image}")
-                    break
-
-            # Si no se encontró ninguna con texto descriptivo, tomar la primera
-            if not image and custom_images:
-                image = custom_images[0].get('src', '').strip()
-                logging.info(f"Imagen encontrada via patrón personalizado '{CUSTOM_IMAGE_PATTERN}' (primera encontrada): {image}")
 
     # Si no se encontró ninguna imagen
     if not image:
@@ -900,55 +948,86 @@ def fetch_product_details_from_soup(soup):
         price = format_price(0)
     else:
         price_list = []
-        for price_tag in PRICE_TAGS:
+        logging.info(f"Starting price extraction. CHECK_PRICE=True. Tags to check: {len(PRICE_TAGS)}")
+        
+        for i, price_tag in enumerate(PRICE_TAGS):
+            logging.info(f"Checking tag {i+1}/{len(PRICE_TAGS)}: {price_tag}")
+            
             # Si el precio se encuentra por 'id' además de por 'class'
             if "id" in price_tag:
                 # Buscar por id también
                 elements = soup.find_all(price_tag["tag"], id=price_tag["id"])
+                logging.info(f"Found {len(elements)} elements by ID '{price_tag['id']}'")
             else:
                 # Buscar solo por clase
                 elements = soup.find_all(price_tag["tag"], class_=lambda c: c and price_tag["class"] in c)
+                logging.info(f"Found {len(elements)} elements by Class '{price_tag['class']}'")
 
-            for element in elements:
+            for j, element in enumerate(elements):
+                logging.info(f"Processing element {j+1}/{len(elements)}")
+                # Logging del contenido raw del elemento (truncado)
+                raw_html = str(element)[:200].replace('\n', ' ')
+                logging.info(f"Element HTML (truncated): {raw_html}...")
+
                 # Buscar primero dentro del <ins> (precio actual si hay descuento)
                 ins_element = element.find("ins")
                 if ins_element:
+                    logging.info("Found <ins> element")
                     price_bdi = ins_element.find("bdi")
-                    price_text = price_bdi.get_text(strip=True) if price_bdi else ins_element.get_text(strip=True)
+                    if price_bdi:
+                        logging.info("Found <bdi> inside <ins>")
+                        price_text = price_bdi.get_text(strip=True)
+                    else:
+                        logging.info("No <bdi> inside <ins>, using <ins> text")
+                        price_text = ins_element.get_text(strip=True)
                 else:
+                    logging.info("No <ins> element found")
                     # Si no hay <ins>, tomar el precio desde el <bdi> dentro del <span>
                     price_bdi = element.find("bdi")
                     if price_bdi:
+                        logging.info("Found <bdi> element")
                         price_text = price_bdi.get_text(strip=True)
                     else:
+                        logging.info("No <bdi> element found, using direct element text")
                         # Si no hay <bdi>, intentar extraer directamente del elemento
                         price_text = element.get_text(strip=True)
 
                 # Extraer precios del texto
+                logging.info(f"Raw extracted text for price: '{price_text}'")
                 prices = extract_prices(price_text)
+                logging.info(f"Extracted prices from text: {prices}")
+                
                 if not prices:
                     # Si no se encontraron precios, intentar con el texto completo del elemento
                     full_text = element.get_text(strip=True)
                     if full_text != price_text:
+                        logging.info(f"Retrying with full element text: '{full_text[:100]}...'")
                         prices = extract_prices(full_text)
+                        logging.info(f"Extracted prices from full text: {prices}")
 
                 price_list.extend(prices)
-        price = "Price not found" if not price_list else format_price(price_list[0])  # Tomar el primer precio correcto
+        
+        logging.info(f"Final collected price list: {price_list}")
+        if not price_list:
+            price = "Price not found"
+        else:
+            if LOWER_PRICE:
+                # Si LOWER_PRICE es True, tomamos el menor precio encontrado
+                # price_list es una lista de tuplas (valor, moneda)
+                best_price = min(price_list, key=lambda x: x[0])
+                price = format_price(best_price[0], best_price[1])
+            else:
+                # Si LOWER_PRICE es False, tomamos el primer precio encontrado
+                best_price = price_list[0]
+                price = format_price(best_price[0], best_price[1])
 
-    in_stock = True
-    if CHECK_STOCK:
-        for stock_tag in STOCK_TAGS:
-            tag = soup.find(stock_tag["tag"], class_=stock_tag["class"])
-            if tag and STOCK_TEXT.lower() in tag.get_text().lower():
-                in_stock = False
-                break
+
 
 
     return {
         "image": image,
         "description": description.strip(),
-        "price": price,
-        "in_stock": in_stock
+        "price": price
     }
 
 
@@ -1018,23 +1097,12 @@ async def fetch_details(session, url, title, semaphore, max_retries=3):
                         logging.warning("Price not found")
                         return ('discarded', {'url': url, 'title': title})
 
-                    if CHECK_STOCK and not details["in_stock"]:
-                        return ('without_stock', {
-                            "url": url,
-                            "title": title,
-                            "image": details["image"],
-                            "description": details["description"],
-                            "price": details["price"],
-                            "in_stock": details["in_stock"]
-                        })
-
                     return ('in_stock', {
                         "url": url,
                         "title": title,
                         "image": details["image"],
                         "description": details["description"],
-                        "price": details["price"],
-                        "in_stock": details["in_stock"]
+                        "price": details["price"]
                     })
 
             except aiohttp.ClientHttpProxyError as e:
@@ -1050,8 +1118,7 @@ async def fetch_product_details(urls_titles, max_concurrent_requests=10):
     semaphore = asyncio.Semaphore(max_concurrent_requests)
     connector = aiohttp.TCPConnector(limit_per_host=max_concurrent_requests)
 
-    in_stock_products = []
-    without_stock_products = []
+    products = []
     discarded_products = []
 
     async with aiohttp.ClientSession(connector=connector) as session:
@@ -1060,16 +1127,14 @@ async def fetch_product_details(urls_titles, max_concurrent_requests=10):
 
     for status, data in results:
         if status == 'in_stock':
-            in_stock_products.append(data)
-        elif status == 'without_stock':
-            without_stock_products.append(data)
+            products.append(data)
         elif status == 'discarded':
             discarded_products.append(data)
         else:
             # Handle errors or other statuses if needed
             pass
 
-    return in_stock_products, without_stock_products, discarded_products
+    return products, discarded_products
 
 def test_extract_text_smart():
     """

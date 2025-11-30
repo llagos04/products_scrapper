@@ -2,16 +2,14 @@ import asyncio
 import logging
 import src.crawler as crawler
 import src.fetcher as fetcher
-import src.analizer as analizer
 import src.results as results
 import time
 from colorama import init, Fore, Style
 from dotenv import load_dotenv
-from CONFIG import ROOT_URL, LLM_BATCH_SIZE, TARGET_PRODUCTS_N, CONCURRENT_REQUESTS, GENERAL_BATCH_SIZE, IGNORE_URLS_WITH, CHECK_SITEMAP
+from CONFIG import ROOT_URL, TARGET_PRODUCTS_N, CONCURRENT_REQUESTS, GENERAL_BATCH_SIZE
 import signal
 from src.crawler import Crawler
 from src.fetcher import fetch_titles, fetch_product_details
-from src.analizer import select_product_urls
 from src.results import get_execution_number, ResultsManager
 import sys
 
@@ -145,28 +143,16 @@ async def main():
         logging.info(f"Fetching all URLs from {ROOT_URL}...")
 
         selected_urls = []
-        if CHECK_SITEMAP:
-            all_sitemaps = await crawler_instance.get_all_urls()
-            # Recorrer la lista de sitemaps y sus URLs asociadas
-            for sitemap_data in all_sitemaps:
-                sitemap, urls = sitemap_data['sitemap'], sitemap_data['urls']
-                urls_from_sitemap = manual_sitemap_selection(sitemap, urls)
-                selected_urls.extend(urls_from_sitemap)
+        
+        all_sitemaps = await crawler_instance.get_all_urls()
+        # Recorrer la lista de sitemaps y sus URLs asociadas
+        for sitemap_data in all_sitemaps:
+            sitemap, urls = sitemap_data['sitemap'], sitemap_data['urls']
+            urls_from_sitemap = manual_sitemap_selection(sitemap, urls)
+            selected_urls.extend(urls_from_sitemap)
 
-            # LOG adicional: mostrar todas las URLs seleccionadas
-            logging.info(f"Selected {len(selected_urls)} URLs after manual sitemap filtering.")
-
-        # If there are no manually selected URLs, proceed with crawling or LLM analysis
-        else:
-            logging.info("No URLs selected manually. Proceeding with crawling or LLM-based filtering...")
-            # Perform crawling (if not already done) or use LLM for product selection
-
-            # If we have no sitemaps or filtered URLs, we'll use the crawling method and the LLM
-            selected_urls = await crawler_instance.get_all_urls_by_crawling()
-            logging.info(f"Found {len(selected_urls)} URLs via crawling.")
-            
-
-            # Use LLM for product selectio
+        # LOG adicional: mostrar todas las URLs seleccionadas
+        logging.info(f"Selected {len(selected_urls)} URLs after manual sitemap filtering.")
 
         # Variables to keep track of counts
         total_products_found = 0
@@ -214,33 +200,32 @@ async def main():
             start_time_fetch_details = time.time()
             
             # Fetch product details
-            in_stock_products, without_stock_products, discarded_products = await fetcher.fetch_product_details(
+            products, discarded_products = await fetcher.fetch_product_details(
                 all_urls_titles, max_concurrent_requests=CONCURRENT_REQUESTS
             )
 
             # Save Results
             start_time_save_results = time.time()
-            results_manager.append_results(in_stock_products, without_stock_products, discarded_products)
+            results_manager.append_results(products, discarded_products)
             elapsed_time_save_results = time.time() - start_time_save_results
 
-            logging.info(f"Products with stock: {results_manager.total_products_with_stock}" + Style.RESET_ALL)
-            logging.info(f"Products without stock: {results_manager.total_products_without_stock}" + Style.RESET_ALL)
+            logging.info(f"Products found: {results_manager.total_products}" + Style.RESET_ALL)
             logging.info(f"Discarded products: {results_manager.total_discarded_products}" + Style.RESET_ALL)
-            logging.info(f"Total products processed: {results_manager.total_products_with_stock + results_manager.total_products_without_stock + results_manager.total_discarded_products}" + Style.RESET_ALL)
+            logging.info(f"Total products processed: {results_manager.total_products + results_manager.total_discarded_products}" + Style.RESET_ALL)
             logging.info(f"Total URLs to process: {total_urls_to_process}" + Style.RESET_ALL)
             
             elapsed_iteration_time = time.time() - start_iteration_time
             logging.info(Fore.GREEN + Style.BRIGHT + f"Completed iteration {iterations} in {elapsed_iteration_time:.2f} seconds" + Style.RESET_ALL)
             
             # Agregar delay entre batches si hay rate limiting activado
-            if results_manager.total_products_with_stock < TARGET_PRODUCTS_N and selected_urls:
+            if results_manager.total_products < TARGET_PRODUCTS_N and selected_urls:
                 from CONFIG import USE_RATE_LIMIT, BATCH_DELAY
                 if USE_RATE_LIMIT:
                     logging.info(f"Rate limiting activado. Esperando {BATCH_DELAY} segundos antes del siguiente batch...")
                     time.sleep(BATCH_DELAY)
 
             # Check if TARGET_PRODUCTS_N is reached
-            if results_manager.total_products_with_stock >= TARGET_PRODUCTS_N:
+            if results_manager.total_products >= TARGET_PRODUCTS_N:
                 logging.info(f"Target number of products ({TARGET_PRODUCTS_N}) reached.")
                 break
             if total_urls_processed >= total_urls_to_process:

@@ -6,7 +6,7 @@ import random
 import time
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
-from playwright.async_api import async_playwright
+
 from xml.etree import ElementTree as ET
 from lxml import etree as lxml_etree
 from aiohttp import ClientSession
@@ -329,25 +329,7 @@ def create_session_with_random_headers():
     """
     return aiohttp.ClientSession(headers=get_random_headers())
 
-async def fetch_links_with_playwright(url):
-    """
-    Usa Playwright para renderizar la página y extraer enlaces generados dinámicamente.
-    """
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
-        await page.goto(url)
-        html_content = await page.content()
-        soup = BeautifulSoup(html_content, "html.parser")
 
-        links = []
-        for link in soup.find_all("a", href=True):
-            href = link["href"]
-            full_url = urljoin(url, href)
-            links.append(full_url)
-
-        await browser.close()
-        return links
 
 def is_same_domain(domain, url, include_subdomains=True):
     """
@@ -623,27 +605,7 @@ class Crawler:
 
                                     logging.info(f"{links_found} enlaces encontrados en {normalized_url}")
 
-                                    # Extraer enlaces JavaScript si es necesario
-                                    if self.is_javascript_driven and not self.stop_crawling:
-                                        js_links = await fetch_links_with_playwright(normalized_url)
-                                        for js_link in js_links:
-                                            full_js_link = urljoin(normalized_url, js_link)
-                                            full_js_link = normalize_url(full_js_link)
 
-                                            if is_same_domain(self.domain, full_js_link):
-                                                async with self.visited_lock:
-                                                    if full_js_link not in self.visited and full_js_link not in self.ignore_links:
-                                                        await self.urls_to_visit.put(full_js_link)
-                                                        # Verificar si se alcanzó MAX_URLS
-                                                        if len(self.visited) + self.urls_to_visit.qsize() >= MAX_URLS:
-                                                            logging.info(f"Reached MAX_URLS limit of {MAX_URLS}, stopping addition of new URLs.")
-                                                            self.stop_crawling = True
-                                                            # Añadimos sentinels para desbloquear las tareas
-                                                            for _ in range(self.concurrent_requests):
-                                                                await self.urls_to_visit.put(None)
-                                                            break
-                                            else:
-                                                logging.debug(f"Skipping JS URL from different domain: {full_js_link}")
 
                         except aiohttp.ClientHttpProxyError as e:
                             proxy_manager.mark_proxy_failed(proxy)
