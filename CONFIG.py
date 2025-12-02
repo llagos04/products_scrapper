@@ -60,7 +60,8 @@
 # ROOT_URL = "https://www.growindustry.es/"
 # ROOT_URL = "https://ecoeko.es/"
 # ROOT_URL = "https://www.placeforpros.com/"
-ROOT_URL = "https://www.imprentaonline24.es/"
+# ROOT_URL = "https://www.imprentaonline24.es/"
+ROOT_URL = "https://fotok.es/"
 
 # Target number of products to scrape
 TARGET_PRODUCTS_N = 2000
@@ -79,33 +80,36 @@ TITLE_TAGS = [
     # {"tag": "h1", "class": "jet-headline jet-headline--direction-horizontal"}, # Sisma Laser
     # ... (add other commented out selectors here if needed) ...
     # {"tag": "h1", "class": "font-heading-extra-bold margin0"}, # Place for Pros
-    {"tag": "h3", "class": "awp-tituloH3"}, # Imprenta Online 24
+    # {"tag": "h3", "class": "awp-tituloH3"}, # Imprenta Online 24
+    {"tag": "h1", "class": "h1 page-title"}, # Fotok
 ]
 TITLE_SEPARATORS = [""]
 
 # --- PRICE ---
-CHECK_PRICE = False
+CHECK_PRICE = True
 LOWER_PRICE = True 
 PRICE_TAGS = [
     # {"tag": "span", "class": "woocommerce-Price-amount amount"},
     # ... (add other commented out selectors here if needed) ...
     # {"tag": "div", "class": "price__sale"}, # Place for Pros
-    {"tag": "span", "id": "resulPrecioConIva"}, # Imprenta Online 24
+    # {"tag": "span", "id": "resulPrecioConIva"}, # Imprenta Online 24
+    {"tag": "span", "class": "product-price current-price-value"}, # Fotok
 ]
 
 # --- DESCRIPTION ---
-OG_DESCRIPTION = True
+OG_DESCRIPTION = False
 MODIFY_DESCRIPTION = False
 DELETE_DESCRIPTION_CHARACTERS = ["---", "\\"]
 DESCRIPTION_TAGS = [
     # {"tag": "div", "class": "woocommerce-tabs wc-tabs-wrapper"},
     # ... (add other commented out selectors here if needed) ...
     # {"tag": "div", "class": "product__info-wrapper product__info-wrapper-media-left grid__item por"}, # Place for Pros
-    {"tag": "div", "class": "col-md-6 col-lg-5 col-xl-7"}, # Imprenta Online 24
+    # {"tag": "div", "class": "col-md-6 col-lg-5 col-xl-7"}, # Imprenta Online 24
+    {"tag": "div", "id": "product-infos-tabs-content"}, # Fotok
 ]
 
 # --- IMAGES ---
-OG_IMAGE = False
+OG_IMAGE = True
 IMAGE_IDS = []
 IMAGE_CLASSES = ["d-block w-100 img-fluid"]
 
