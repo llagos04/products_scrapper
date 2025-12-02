@@ -59,7 +59,8 @@
 # ROOT_URL = "https://www.tiendafetichista.com/"
 # ROOT_URL = "https://www.growindustry.es/"
 # ROOT_URL = "https://ecoeko.es/"
-ROOT_URL = "https://www.placeforpros.com/"
+# ROOT_URL = "https://www.placeforpros.com/"
+ROOT_URL = "https://www.imprentaonline24.es/"
 
 # Target number of products to scrape
 TARGET_PRODUCTS_N = 2000
@@ -77,17 +78,19 @@ TITLE_TAGS = [
     # {"tag": "h1", "class": "product_title entry-title"},
     # {"tag": "h1", "class": "jet-headline jet-headline--direction-horizontal"}, # Sisma Laser
     # ... (add other commented out selectors here if needed) ...
-    {"tag": "h1", "class": "font-heading-extra-bold margin0"}, # Place for Pros
+    # {"tag": "h1", "class": "font-heading-extra-bold margin0"}, # Place for Pros
+    {"tag": "h3", "class": "awp-tituloH3"}, # Imprenta Online 24
 ]
 TITLE_SEPARATORS = [""]
 
 # --- PRICE ---
-CHECK_PRICE = True
+CHECK_PRICE = False
 LOWER_PRICE = True 
 PRICE_TAGS = [
     # {"tag": "span", "class": "woocommerce-Price-amount amount"},
     # ... (add other commented out selectors here if needed) ...
-    {"tag": "div", "class": "price__sale"}, # Place for Pros
+    # {"tag": "div", "class": "price__sale"}, # Place for Pros
+    {"tag": "span", "id": "resulPrecioConIva"}, # Imprenta Online 24
 ]
 
 # --- DESCRIPTION ---
@@ -97,13 +100,14 @@ DELETE_DESCRIPTION_CHARACTERS = ["---", "\\"]
 DESCRIPTION_TAGS = [
     # {"tag": "div", "class": "woocommerce-tabs wc-tabs-wrapper"},
     # ... (add other commented out selectors here if needed) ...
-    {"tag": "div", "class": "product__info-wrapper product__info-wrapper-media-left grid__item por"}, # Place for Pros
+    # {"tag": "div", "class": "product__info-wrapper product__info-wrapper-media-left grid__item por"}, # Place for Pros
+    {"tag": "div", "class": "col-md-6 col-lg-5 col-xl-7"}, # Imprenta Online 24
 ]
 
 # --- IMAGES ---
-OG_IMAGE = True
+OG_IMAGE = False
 IMAGE_IDS = []
-IMAGE_CLASSES = []
+IMAGE_CLASSES = ["d-block w-100 img-fluid"]
 
 # =============================================================================
 # 4. ADVANCED / NETWORK CONFIGURATION
@@ -119,7 +123,7 @@ REQUEST_TIMEOUT = 20
 USE_RATE_LIMIT = True
 MIN_REQUEST_DELAY = 1.0  # Minimum delay between requests (seconds)
 MAX_REQUEST_DELAY = 3.0  # Maximum delay between requests (seconds)
-BATCH_DELAY = 5.0        # Delay between batches (seconds)
+BATCH_DELAY = 1.0        # Delay between batches (seconds)
 RATE_LIMIT_BACKOFF_MULTIPLIER = 2.0
 MAX_RATE_LIMIT_RETRIES = 5
 
