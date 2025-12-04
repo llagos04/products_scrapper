@@ -411,10 +411,9 @@ class Crawler:
 
     async def get_all_urls(self):
         """
-        Obtiene todas las URLs del sitemap, si está disponible, o usa el crawling regular si no hay sitemap.
-        Este método maneja sitemaps recursivos y devuelve todos los sitemaps y URLs.
+        Obtiene todas las URLs del sitemap, si está disponible.
+        Si no se encuentra sitemap, se detiene el proceso.
         """
-        all_sitemaps = []
         if not self.sitemap_checked:
             self.sitemap_checked = True  # Solo intentamos obtener el sitemap una vez
             logging.info(f"Checking for sitemap in robots.txt at {self.domain}...")
@@ -425,13 +424,74 @@ class Crawler:
             if not sitemap_url:
                 # Probar ubicaciones comunes para el sitemap
                 common_sitemap_paths = [
-                    f"{self.domain}/1_index_sitemap.xml",
-                    f"{self.domain}/sitemap.xml",
-                    f"{self.domain}/sitemap_index.xml",
-                    f"{self.domain}/sitemap/sitemap.xml",
-                    f"{self.domain}/sitemaps.xml",
-                    f"{self.domain}/sitemapindex.xml",
-                    
+    # --- PrestaShop estándar y multilenguaje ---
+    f"{self.domain}/1_index_sitemap.xml",
+    f"{self.domain}/1_es_0_sitemap.xml",
+    f"{self.domain}/1_en_0_sitemap.xml",
+    f"{self.domain}/1_fr_0_sitemap.xml",
+    f"{self.domain}/1_pt_0_sitemap.xml",
+    f"{self.domain}/1_it_0_sitemap.xml",
+    f"{self.domain}/1_de_0_sitemap.xml",
+
+    # Variantes para multitienda PrestaShop
+    f"{self.domain}/2_index_sitemap.xml",
+    f"{self.domain}/2_es_0_sitemap.xml",
+    f"{self.domain}/3_index_sitemap.xml",
+
+    # Variantes comunes PrestaShop (muchos módulos SEO las generan)
+    f"{self.domain}/sitemap_shop_1.xml",
+    f"{self.domain}/sitemap_shop_2.xml",
+    f"{self.domain}/sitemap_products.xml",
+    f"{self.domain}/sitemap_categories.xml",
+    f"{self.domain}/sitemap_cms.xml",
+    f"{self.domain}/sitemap_images.xml",
+    f"{self.domain}/sitemap_index.xml",
+    f"{self.domain}/sitemap-main.xml",
+
+    # --- Variaciones de nombre y ubicación ---
+    f"{self.domain}/index_sitemap.xml",
+    f"{self.domain}/sitemap.xml",
+    f"{self.domain}/sitemap_index.xml",
+    f"{self.domain}/sitemap/sitemap.xml",
+    f"{self.domain}/sitemap/sitemap_index.xml",
+    f"{self.domain}/sitemaps.xml",
+    f"{self.domain}/sitemapindex.xml",
+
+    # --- Sitemaps numerados ---
+    f"{self.domain}/sitemap-1.xml",
+    f"{self.domain}/sitemap-2.xml",
+    f"{self.domain}/sitemap-3.xml",
+    f"{self.domain}/sitemap-4.xml",
+    f"{self.domain}/sitemap_1.xml",
+    f"{self.domain}/sitemap_2.xml",
+    f"{self.domain}/sitemap_3.xml",
+
+    # --- Variantes con guiones y underscores ---
+    f"{self.domain}/sitemap-product.xml",
+    f"{self.domain}/sitemap-category.xml",
+    f"{self.domain}/sitemap-image.xml",
+    f"{self.domain}/sitemap-categories.xml",
+
+    # --- Sitemaps generados por módulos SEO populares ---
+    f"{self.domain}/gsitemap.xml",                   # Google Sitemap módulo antiguo
+    f"{self.domain}/modules/gsitemap/gsitemap.xml", # Ruta clásica PrestaShop
+    f"{self.domain}/modules/gsitemap/sitemap.xml",
+    f"{self.domain}/modules/sitemappro/sitemap.xml",
+    f"{self.domain}/modules/sitemaps/sitemap.xml",
+    f"{self.domain}/modules/smartseo/sitemap.xml",
+    f"{self.domain}/modules/seositemap/sitemap.xml",
+
+    # --- Rutas habituales en servidores ---
+    f"{self.domain}/seo/sitemap.xml",
+    f"{self.domain}/xml/sitemap.xml",
+    f"{self.domain}/public/sitemap.xml",
+
+    # --- Idiomas adicionales ---
+    f"{self.domain}/1_pl_0_sitemap.xml",
+    f"{self.domain}/1_nl_0_sitemap.xml",
+    f"{self.domain}/1_ru_0_sitemap.xml",
+    f"{self.domain}/1_ro_0_sitemap.xml",
+
                 ]
                 logging.info("No sitemap found in robots.txt. Checking common sitemap locations...")
                 for path in common_sitemap_paths:
@@ -452,14 +512,10 @@ class Crawler:
                     logging.info("No URLs found in sitemap.")
                     return []
             else:
-                logging.info("No sitemap found in robots.txt or common locations.")
+                logging.warning("No sitemap found in robots.txt or common locations. Stopping process.")
+                return []
         
-        # Si no hay sitemap, seguimos con el crawling tradicional
-        logging.info(f"No sitemap found, proceeding with crawling...")
-        urls_from_crawling = await self.get_all_urls_by_crawling()
-
-        logging.info(f"Found {len(urls_from_crawling)} URLs from crawling.")
-        return [{'sitemap': 'Crawling', 'urls': urls_from_crawling}]
+        return []
 
     async def url_exists(self, url):
         """
@@ -521,120 +577,6 @@ class Crawler:
                 proxy_manager.mark_proxy_failed(proxy)
                 logging.error(f"Error checking URL {url} (proxy: {proxy}): {e}")
                 return False
-
-    async def get_all_urls_by_crawling(self):
-        semaphore = asyncio.Semaphore(self.concurrent_requests)
-
-        async def process_url(session):
-            while True:
-                url = await self.urls_to_visit.get()
-                if url is None:
-                    # Recibimos el sentinel, salimos del bucle
-                    self.urls_to_visit.task_done()
-                    break
-                try:
-                    async with semaphore:
-                        normalized_url = normalize_url(url)
-
-                        async with self.visited_lock:
-                            if normalized_url in self.visited:
-                                logging.debug(f"URL ya visitada: {normalized_url}")
-                                continue
-                            self.visited.add(normalized_url)
-
-                        # Verificar si se alcanzó MAX_URLS
-                        async with self.visited_lock:
-                            if len(self.visited) >= MAX_URLS:
-                                logging.info(f"Reached MAX_URLS limit of {MAX_URLS}, stopping crawling.")
-                                self.stop_crawling = True
-                                # Añadimos sentinels para desbloquear las tareas
-                                for _ in range(self.concurrent_requests):
-                                    await self.urls_to_visit.put(None)
-                                break
-
-                        logging.info(f"Procesando URL: {normalized_url}")
-                        try:
-                            # Aplicar rate limiting antes de la petición
-                            await rate_limiter.wait_if_needed()
-
-                            # Usar headers aleatorios y proxies para cada request
-                            headers = get_random_headers()
-                            proxy = proxy_manager.get_next_proxy() if proxy_manager.should_use_proxy() else None
-                            async with session.get(normalized_url, headers=headers, timeout=REQUEST_TIMEOUT, proxy=proxy) as response:
-                                logging.info(f"Estado {response.status} recibido para: {normalized_url}")
-
-                                if response.status == 429:
-                                    from src.fetcher import consecutive_429_errors, proxy_manager as fetcher_proxy_manager
-                                    consecutive_429_errors += 1
-                                    proxy_manager.mark_proxy_failed(proxy)
-                                    fetcher_proxy_manager.auto_enable_proxies_on_rate_limit(consecutive_429_errors)
-                                    logging.warning(f"Rate limit exceeded (429) for URL {normalized_url}. Consecutive 429 errors: {consecutive_429_errors}. Skipping.")
-                                    continue
-                                elif response.status == 200:
-                                    content = await response.text()
-                                    soup = BeautifulSoup(content, "html.parser")
-
-                                    # Marcar proxy como exitoso
-                                    proxy_manager.mark_proxy_success(proxy)
-                                    from src.fetcher import consecutive_429_errors
-                                    consecutive_429_errors = 0  # Resetear contador en petición exitosa
-
-                                    # Extraer enlaces del HTML
-                                    links_found = 0
-                                    for link in soup.find_all("a", href=True):
-                                        href = link["href"]
-                                        full_url = urljoin(normalized_url, href)
-                                        full_url = normalize_url(full_url)
-
-                                        if is_same_domain(self.domain, full_url):
-                                            async with self.visited_lock:
-                                                if full_url not in self.visited and full_url not in self.ignore_links:
-                                                    if not self.stop_crawling:
-                                                        await self.urls_to_visit.put(full_url)
-                                                        links_found += 1
-                                                        # Verificar si se alcanzó MAX_URLS
-                                                        if len(self.visited) + self.urls_to_visit.qsize() >= MAX_URLS:
-                                                            logging.info(f"Reached MAX_URLS limit of {MAX_URLS}, stopping addition of new URLs.")
-                                                            self.stop_crawling = True
-                                                            # Añadimos sentinels para desbloquear las tareas
-                                                            for _ in range(self.concurrent_requests):
-                                                                await self.urls_to_visit.put(None)
-                                                            break
-                                        else:
-                                            logging.debug(f"Skipping URL from different domain: {full_url}")
-
-                                    logging.info(f"{links_found} enlaces encontrados en {normalized_url}")
-
-
-
-                        except aiohttp.ClientHttpProxyError as e:
-                            proxy_manager.mark_proxy_failed(proxy)
-                            logging.error(f"Proxy error procesando {normalized_url} (proxy: {proxy}): {e}")
-                        except Exception as e:
-                            proxy_manager.mark_proxy_failed(proxy)
-                            logging.error(f"Error procesando {normalized_url} (proxy: {proxy}): {e}")
-                finally:
-                    self.urls_to_visit.task_done()
-
-        # Usar headers rotativos para cada sesión
-        session_headers = get_random_headers()
-        async with aiohttp.ClientSession(headers=session_headers) as session:
-            # Sembrar la cola con la URL inicial
-            await self.urls_to_visit.put(self.domain)
-
-            tasks = [asyncio.create_task(process_url(session)) for _ in range(self.concurrent_requests)]
-
-            await self.urls_to_visit.join()
-
-            for task in tasks:
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-
-        logging.info(f"Crawling completado. Total de URLs encontradas: {len(self.visited)}")
-        return list(self.visited)
 
     def extract_sitemap_from_robots(self, robots_content):
         """
