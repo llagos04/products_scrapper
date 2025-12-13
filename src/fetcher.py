@@ -381,106 +381,25 @@ def create_session_with_random_headers():
     return aiohttp.ClientSession(headers=get_random_headers())
 
 
-async def fetch_title(session, url, semaphore, max_retries=3):
-    async with semaphore:
-        # Aplicar rate limiting antes de cualquier petición
-        await rate_limiter.wait_if_needed()
+def extract_title_from_soup(soup, url):
+    """
+    Helper to extract title from a BeautifulSoup object.
+    """
+    title = None
+    if OG_TITLE:
+        og_title = soup.find("meta", property="og:title")
+        if og_title and og_title.get("content"):
+            title = og_title.get("content")
 
-        for attempt in range(1, MAX_RATE_LIMIT_RETRIES + 1):
-            proxy = None
-            if proxy_manager.should_use_proxy():
-                proxy = proxy_manager.get_next_proxy()
+    if not title:
+        for entry in TITLE_TAGS:
+            title_tag = soup.find(entry["tag"], class_=entry.get("class"))
+            if title_tag:
+                title = title_tag.get_text(strip=True)
+                break
 
-            try:
-                # Usar headers rotativos para cada request
-                headers = get_random_headers()
-
-                timeout = aiohttp.ClientTimeout(total=5)
-
-                async with session.get(url, timeout=timeout, headers=headers, proxy=proxy) as response:
-                    if response.status == 403:
-                        logging.warning(f"Access forbidden (403) to {url}. Attempt {attempt} of {max_retries}")
-                        if attempt < max_retries:
-                            delay = 2 ** attempt
-                            logging.info(f"Retrying {url} in {delay} seconds...")
-                            await asyncio.sleep(delay)
-                            continue
-                        else:
-                            logging.error(f"Failed to fetch {url} after {max_retries} attempts due to 403 Forbidden.")
-                            return {'url': url, 'title': "Access forbidden (403)"}
-
-                    elif response.status == 429:
-                        consecutive_429_errors += 1
-                        logging.warning(f"Rate limit exceeded (429) to {url}. Attempt {attempt} of {MAX_RATE_LIMIT_RETRIES}. Consecutive 429 errors: {consecutive_429_errors}")
-
-                        # Activar proxies automáticamente si hay muchos errores 429
-                        proxy_manager.auto_enable_proxies_on_rate_limit(consecutive_429_errors)
-
-                        if attempt < MAX_RATE_LIMIT_RETRIES:
-                            # Generar nuevos headers aleatorios
-                            new_headers = get_random_headers()
-                            logging.info(f"New headers for retry: User-Agent: {new_headers['User-Agent']}")
-                            # Esperar con backoff exponencial mejorado para rate limit
-                            delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
-                            logging.info(f"Rate limit detected. Retrying {url} with new headers in {delay:.2f} seconds...")
-                            await asyncio.sleep(delay)
-                            # Aplicar rate limiting adicional antes del retry
-                            await rate_limiter.wait_if_needed()
-                            continue
-                        else:
-                            logging.error(f"Failed to fetch {url} after {MAX_RATE_LIMIT_RETRIES} attempts due to 429 Rate Limit.")
-                            return {'url': url, 'title': "Rate limit exceeded (429)"}
-
-                    elif response.status != 200:
-                        return {'url': url, 'title': f"Status code: {response.status}"}
-
-                    content = await response.text()
-                    soup = BeautifulSoup(content, 'lxml')
-
-                    # Marcar proxy como exitoso y resetear contador de errores 429
-                    proxy_manager.mark_proxy_success(proxy)
-                    consecutive_429_errors = 0  # Resetear contador en petición exitosa
-
-                    title = None
-                    if OG_TITLE:
-                        og_title = soup.find("meta", property="og:title")
-                        if og_title and og_title.get("content"):
-                            title = og_title.get("content")
-
-                    if not title:
-                        for entry in TITLE_TAGS:
-                            title_tag = soup.find(entry["tag"], class_=entry.get("class"))
-                            if title_tag:
-                                title = title_tag.get_text(strip=True)
-                                break
-
-                    formatted_title = format_title(title)
-                    return {'url': url, 'title': "Title not found" if not formatted_title else formatted_title}
-
-            except asyncio.TimeoutError:
-                proxy_manager.mark_proxy_failed(proxy)
-                logging.warning(f"Attempt {attempt}: Timed out fetching {url} (proxy: {proxy})")
-                if attempt < max_retries:
-                    delay = 2 ** attempt
-                    logging.info(f"Retrying {url} in {delay} seconds...")
-                    await asyncio.sleep(delay)
-                else:
-                    logging.error(f"Failed to fetch {url} after {max_retries} attempts due to timeout.")
-                    return {'url': url, 'title': "Timed out"}
-            except aiohttp.ClientHttpProxyError as e:
-                proxy_manager.mark_proxy_failed(proxy)
-                logging.warning(f"Attempt {attempt}: Proxy error fetching {url} (proxy: {proxy}): {e}")
-                if attempt < max_retries:
-                    delay = 2 ** attempt
-                    logging.info(f"Retrying {url} with different proxy in {delay} seconds...")
-                    await asyncio.sleep(delay)
-                else:
-                    logging.error(f"Failed to fetch {url} after {max_retries} attempts due to proxy errors.")
-                    return {'url': url, 'title': "Proxy Error"}
-            except Exception as e:
-                proxy_manager.mark_proxy_failed(proxy)
-                logging.exception(f"Attempt {attempt}: Error fetching title from {url} (proxy: {proxy}): {e}")
-                return {'url': url, 'title': "Error"}
+    formatted_title = format_title(title)
+    return "Title not found" if not formatted_title else formatted_title
 
 def format_title(title):
     if not title:
@@ -494,37 +413,6 @@ def format_title(title):
 
 
 
-async def fetch_titles(urls, max_concurrent_requests=10):
-    """
-    Asynchronously fetch titles for a list of URLs.
-
-    :param urls: List of URLs to fetch titles from.
-    :param max_concurrent_requests: Maximum number of concurrent requests.
-    :return: List of dictionaries with 'url' and 'title'.
-    """
-    semaphore = asyncio.Semaphore(max_concurrent_requests)
-    connector = aiohttp.TCPConnector(limit_per_host=max_concurrent_requests)
-
-    async with aiohttp.ClientSession(connector=connector) as session:
-        tasks = [fetch_title(session, url, semaphore) for url in urls]
-        results = await asyncio.gather(*tasks)
-
-    # Manage Exceptions and remove urls with duplicated titles
-    seen_titles = set()
-    filtered_results = []
-    for result in results:
-        if isinstance(result, Exception):
-            logging.exception(f"Error fetching title: {result}")
-        elif result is None:
-            continue
-        elif result['title'] not in seen_titles:
-                seen_titles.add(result['title'])
-                filtered_results.append({
-                    'url': result['url'],
-                    'title': result['title']
-                })
-
-    return filtered_results
 
 import re
 
@@ -1024,7 +912,11 @@ def fetch_product_details_from_soup(soup):
 
 
 
+    # Extract title
+    title = extract_title_from_soup(soup, "") # URL not needed for title extraction in this helper
+
     return {
+        "title": title,
         "image": image,
         "description": description.strip(),
         "price": price
@@ -1032,7 +924,7 @@ def fetch_product_details_from_soup(soup):
 
 
 
-async def fetch_details(session, url, title, semaphore, max_retries=3):
+async def fetch_details(session, url, semaphore, max_retries=3):
     async with semaphore:
         # Aplicar rate limiting antes de cualquier petición
         await rate_limiter.wait_if_needed()
@@ -1057,7 +949,7 @@ async def fetch_details(session, url, title, semaphore, max_retries=3):
                             continue
                         else:
                             logging.error(f"Failed to fetch {url} after {max_retries} attempts due to 403 Forbidden.")
-                            return ('discarded', {'url': url, 'title': title, 'error': "Access forbidden (403)"})
+                            return ('discarded', {'url': url, 'title': "Access forbidden (403)", 'error': "Access forbidden (403)"})
 
                     elif response.status == 429:
                         consecutive_429_errors += 1
@@ -1079,11 +971,11 @@ async def fetch_details(session, url, title, semaphore, max_retries=3):
                             continue
                         else:
                             logging.error(f"Failed to fetch {url} after {MAX_RATE_LIMIT_RETRIES} attempts due to 429 Rate Limit.")
-                            return ('discarded', {'url': url, 'title': title, 'error': "Rate limit exceeded (429)"})
+                            return ('discarded', {'url': url, 'title': "Rate limit exceeded (429)", 'error': "Rate limit exceeded (429)"})
 
                     elif response.status != 200:
                         logging.warning(f"Status code: {response.status}")
-                        return ('discarded', {'url': url, 'title': title, 'error': f"Status code: {response.status}"})
+                        return ('discarded', {'url': url, 'title': f"Status code: {response.status}", 'error': f"Status code: {response.status}"})
 
                     content = await response.text()
                     soup = BeautifulSoup(content, 'lxml')
@@ -1095,11 +987,11 @@ async def fetch_details(session, url, title, semaphore, max_retries=3):
 
                     if details["price"] == "Price not found":
                         logging.warning("Price not found")
-                        return ('discarded', {'url': url, 'title': title})
+                        return ('discarded', {'url': url, 'title': details['title']})
 
                     return ('in_stock', {
                         "url": url,
-                        "title": title,
+                        "title": details["title"],
                         "image": details["image"],
                         "description": details["description"],
                         "price": details["price"]
@@ -1108,13 +1000,13 @@ async def fetch_details(session, url, title, semaphore, max_retries=3):
             except aiohttp.ClientHttpProxyError as e:
                 proxy_manager.mark_proxy_failed(proxy)
                 logging.error(f"Proxy error fetching details for {url} (proxy: {proxy}): {e}")
-                return ('discarded', {'url': url, 'title': title, 'error': f'Proxy Error: {str(e)}'})
+                return ('discarded', {'url': url, 'title': 'Proxy Error', 'error': f'Proxy Error: {str(e)}'})
             except Exception as e:
                 proxy_manager.mark_proxy_failed(proxy)
                 logging.error(f"Error fetching details for {url} (proxy: {proxy}): {e}")
-                return ('discarded', {'url': url, 'title': title, 'error': str(e)})
+                return ('discarded', {'url': url, 'title': 'Error', 'error': str(e)})
             
-async def fetch_product_details(urls_titles, max_concurrent_requests=10):
+async def fetch_product_details(urls, max_concurrent_requests=10):
     semaphore = asyncio.Semaphore(max_concurrent_requests)
     connector = aiohttp.TCPConnector(limit_per_host=max_concurrent_requests)
 
@@ -1122,7 +1014,7 @@ async def fetch_product_details(urls_titles, max_concurrent_requests=10):
     discarded_products = []
 
     async with aiohttp.ClientSession(connector=connector) as session:
-        tasks = [fetch_details(session, url_title["url"], url_title["title"], semaphore) for url_title in urls_titles]
+        tasks = [fetch_details(session, url, semaphore) for url in urls]
         results = await asyncio.gather(*tasks)
 
     for status, data in results:

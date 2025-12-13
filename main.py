@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from CONFIG import ROOT_URL, TARGET_PRODUCTS_N, CONCURRENT_REQUESTS, GENERAL_BATCH_SIZE
 import signal
 from src.crawler import Crawler
-from src.fetcher import fetch_titles, fetch_product_details
+from src.fetcher import fetch_product_details
 from src.results import get_execution_number, ResultsManager
 import sys
 
@@ -181,28 +181,25 @@ async def main():
             processed_urls.update(batch_urls_to_process)
 
 
-            # Fetch Titles
-            start_time_fetch_titles = time.time()
-            url_titles = await fetcher.fetch_titles(batch_urls_to_process, max_concurrent_requests=CONCURRENT_REQUESTS)
-            elapsed_time_fetch_titles = time.time() - start_time_fetch_titles
-
-            all_urls_titles = []
-            urls_titles_found = [url_title["url"] for url_title in url_titles]
-            urls_titles_not_found = [url for url in batch_urls_to_process if url not in urls_titles_found]
-            all_urls_titles.extend(url_titles)
-            for url in urls_titles_not_found:
-                all_urls_titles.append({"url": url, "title": "Title not found"})
-            results_manager.save_urls_to_txt(all_urls_titles)
-            
-            
-            # Ahora pasamos la lista de diccionarios con 'url' y 'title' a fetch_product_details
-            
+            # Fetch product details (includes title extraction now)
             start_time_fetch_details = time.time()
             
-            # Fetch product details
+            # Fetch product details directly from URLs
             products, discarded_products = await fetcher.fetch_product_details(
-                all_urls_titles, max_concurrent_requests=CONCURRENT_REQUESTS
+                batch_urls_to_process, max_concurrent_requests=CONCURRENT_REQUESTS
             )
+
+            # Reconstruct title info for logging
+            all_urls_titles = []
+            for p in products:
+                all_urls_titles.append({'url': p['url'], 'title': p['title']})
+            for d in discarded_products:
+                all_urls_titles.append({'url': d['url'], 'title': d.get('title', 'Title not found')})
+            
+            # Add any URLs that completely failed (if any are missing from both lists, though fetcher handles errors by discarding)
+            # In current fetcher logic, everything returns as either product or discarded, so this cover usage.
+            
+            results_manager.save_urls_to_txt(all_urls_titles)
 
             # Save Results
             start_time_save_results = time.time()

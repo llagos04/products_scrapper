@@ -3,14 +3,14 @@
 # =============================================================================
 
 # Define the root URL of the website to scrape
+ROOT_URL = "https://todomascota.es"
 
-ROOT_URL = "https://almabebe.com"
 
 # Target number of products to scrape
-TARGET_PRODUCTS_N = 2000
+TARGET_PRODUCTS_N = 5000
 
 # Batch size for general processing
-GENERAL_BATCH_SIZE = 5
+GENERAL_BATCH_SIZE = 3
 
 # =============================================================================
 # 3. SELECTORS & EXTRACTION CONFIGURATION
@@ -19,7 +19,8 @@ GENERAL_BATCH_SIZE = 5
 # --- TITLE ---
 OG_TITLE = False
 TITLE_TAGS = [
-    {"tag": "h1", "class": "product_title entry-title elementor-heading-title elementor-size-default"},
+    {"tag": "h1", "id": "productNameTitle"},
+
 ]
 TITLE_SEPARATORS = [""]
 
@@ -27,7 +28,7 @@ TITLE_SEPARATORS = [""]
 CHECK_PRICE = True
 LOWER_PRICE = True 
 PRICE_TAGS = [
-    {"tag": "span", "class": "woocommerce-Price-amount amount"},
+    {"tag": "span", "class": "AttrFinalPrice"},
 ]
 
 # --- DESCRIPTION ---
@@ -35,7 +36,7 @@ OG_DESCRIPTION = False
 MODIFY_DESCRIPTION = False
 DELETE_DESCRIPTION_CHARACTERS = ["---", "\\"]
 DESCRIPTION_TAGS = [
-    {"tag": "div", "class": "woocommerce-Tabs-panel woocommerce-Tabs-panel--description panel entry-content wc-tab"},
+    {"tag": "div", "id": "producttab-description"},
 ]
 
 # --- IMAGES ---
@@ -48,7 +49,7 @@ IMAGE_CLASSES = [""]
 # =============================================================================
 
 # Number of concurrent requests for fetching titles
-CONCURRENT_REQUESTS = 3
+CONCURRENT_REQUESTS = 20
 
 # Request timeout in seconds
 REQUEST_TIMEOUT = 20
