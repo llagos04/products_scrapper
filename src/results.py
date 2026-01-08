@@ -23,6 +23,7 @@ class ResultsManager:
 
         self.total_products = 0
         self.total_discarded_products = 0
+        self.total_duplicates = 0
         self.seen_titles = []
 
         # Copy CONFIG.py to the results folder
@@ -54,6 +55,7 @@ class ResultsManager:
             self.save_to_excel(product, self.results_file)
             self.total_products += 1
         else:
+            self.total_duplicates += 1
             logging.info(f"Duplicate product found and skipped: {product['title']}")
 
     def append_discarded_product(self, product_title, url):
@@ -86,7 +88,7 @@ class ResultsManager:
         # Create a DataFrame from the product
         df = pd.DataFrame([product])
         df.rename(columns={'title': 'name', 'image': 'image_url'}, inplace=True)
-        df = df[['name', 'description', 'price', 'url', 'image_url']]
+        df = df[['name', 'description', 'price', 'stock', 'url', 'image_url']]
         df['keywords'] = df['name']
 
         # Save to Excel
@@ -108,7 +110,7 @@ class ResultsManager:
         # Create a DataFrame from the list of products
         df = pd.DataFrame(products)
         df.rename(columns={'title': 'name', 'image': 'image_url'}, inplace=True)
-        df = df[['name', 'description', 'price', 'url', 'image_url']]
+        df = df[['name', 'description', 'price', 'stock', 'url', 'image_url']]
         df['keywords'] = df['name']
 
         # Save to Excel
@@ -127,7 +129,8 @@ class ResultsManager:
         file_path = os.path.join(self.results_folder, file_name)
         with open(file_path, 'a', encoding='utf-8') as f:
             f.write(f"{product['title']}\n")
-            f.write(f"Precio: {product['price']}\n\n")
+            f.write(f"Precio: {product['price']}\n")
+            f.write(f"Stock: {product['stock']}\n\n")
             f.write(f"{product['description']}\n\n")
             f.write(f"Información extraída de [{product['title']}]({product['url']})\n\n")
             f.write("\n-------\n\n")

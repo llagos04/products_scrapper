@@ -4,11 +4,11 @@ import time
 import random
 from bs4 import BeautifulSoup
 import aiohttp
-from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, LOWER_PRICE, OG_IMAGE, OG_DESCRIPTION, OG_TITLE, REQUEST_TIMEOUT, TITLE_SEPARATORS, MODIFY_DESCRIPTION, DELETE_DESCRIPTION_CHARACTERS, CHECK_PRICE, IMAGE_IDS, ROOT_URL
+from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, LOWER_PRICE, OG_IMAGE, OG_DESCRIPTION, OG_TITLE, REQUEST_TIMEOUT, TITLE_SEPARATORS, MODIFY_DESCRIPTION, DELETE_DESCRIPTION_CHARACTERS, CHECK_PRICE, IMAGE_IDS, ROOT_URL, CHECK_STOCK, STOCK_TAGS, STOCK_IN_PATTERNS, STOCK_OUT_PATTERNS
 import re
 from markdownify import markdownify as md
 import re
-from CONFIG import USE_PROXIES, AUTO_FETCH_PROXIES, USE_RATE_LIMIT, MIN_REQUEST_DELAY, MAX_REQUEST_DELAY, BATCH_DELAY, RATE_LIMIT_BACKOFF_MULTIPLIER, MAX_RATE_LIMIT_RETRIES
+from CONFIG import USE_PROXIES, AUTO_FETCH_PROXIES, USE_RATE_LIMIT, MIN_REQUEST_DELAY, MAX_REQUEST_DELAY, BATCH_DELAY, RATE_LIMIT_BACKOFF_MULTIPLIER, MAX_RATE_LIMIT_RETRIES, HTML_LOAD_DELAY
 
 
 class ProxyManager:
@@ -762,8 +762,12 @@ def fetch_product_details_from_soup(soup):
     
     # Si no encontramos og:description, recorrer los DESCRIPTION_TAGS definidos en CONFIG.py
     if not description:
+        # for desc_tag in DESCRIPTION_TAGS:
+        #     logging.debug({'Se va a procesar': desc_tag})
+        # ... (removed verbose commented code to clean up) ...
+
         for desc_tag in DESCRIPTION_TAGS:
-            logging.info({'Se va a procesar': desc_tag})
+            logging.debug({'Se va a procesar': desc_tag})
 
             # Determinar si buscar por 'class' o 'id'
             if "class" in desc_tag:
@@ -776,7 +780,7 @@ def fetch_product_details_from_soup(soup):
                 # Si no hay ni 'class' ni 'id', buscar solo por el tag
                 elements = soup.find_all(desc_tag["tag"])
 
-            logging.info({'Número de elementos encontrados': len(elements)})
+            logging.debug({'Número de elementos encontrados': len(elements)})
 
             # Evitar añadir descripciones duplicadas cuando hay elementos gemelos (desktop/mobile, duplicados por layout)
             seen_element_texts = set()
@@ -805,7 +809,7 @@ def fetch_product_details_from_soup(soup):
                     if description:  # Si ya hay contenido, agregar separador
                         description += '\n\n'
                     description += text_content.strip()
-                    logging.info({f'description elemento {i+1}': text_content[:200] + '...' if len(text_content) > 200 else text_content})
+                    logging.debug({f'description elemento {i+1}': text_content[:200] + '...' if len(text_content) > 200 else text_content})
 
         # Continuamos con el siguiente desc_tag sin romper el bucle
 
@@ -836,66 +840,66 @@ def fetch_product_details_from_soup(soup):
         price = format_price(0)
     else:
         price_list = []
-        logging.info(f"Starting price extraction. CHECK_PRICE=True. Tags to check: {len(PRICE_TAGS)}")
+        logging.debug(f"Starting price extraction. CHECK_PRICE=True. Tags to check: {len(PRICE_TAGS)}")
         
         for i, price_tag in enumerate(PRICE_TAGS):
-            logging.info(f"Checking tag {i+1}/{len(PRICE_TAGS)}: {price_tag}")
+            logging.debug(f"Checking tag {i+1}/{len(PRICE_TAGS)}: {price_tag}")
             
             # Si el precio se encuentra por 'id' además de por 'class'
             if "id" in price_tag:
                 # Buscar por id también
                 elements = soup.find_all(price_tag["tag"], id=price_tag["id"])
-                logging.info(f"Found {len(elements)} elements by ID '{price_tag['id']}'")
+                logging.debug(f"Found {len(elements)} elements by ID '{price_tag['id']}'")
             else:
                 # Buscar solo por clase
                 elements = soup.find_all(price_tag["tag"], class_=lambda c: c and price_tag["class"] in c)
-                logging.info(f"Found {len(elements)} elements by Class '{price_tag['class']}'")
+                logging.debug(f"Found {len(elements)} elements by Class '{price_tag['class']}'")
 
             for j, element in enumerate(elements):
-                logging.info(f"Processing element {j+1}/{len(elements)}")
+                logging.debug(f"Processing element {j+1}/{len(elements)}")
                 # Logging del contenido raw del elemento (truncado)
                 raw_html = str(element)[:200].replace('\n', ' ')
-                logging.info(f"Element HTML (truncated): {raw_html}...")
+                logging.debug(f"Element HTML (truncated): {raw_html}...")
 
                 # Buscar primero dentro del <ins> (precio actual si hay descuento)
                 ins_element = element.find("ins")
                 if ins_element:
-                    logging.info("Found <ins> element")
+                    logging.debug("Found <ins> element")
                     price_bdi = ins_element.find("bdi")
                     if price_bdi:
-                        logging.info("Found <bdi> inside <ins>")
+                        logging.debug("Found <bdi> inside <ins>")
                         price_text = price_bdi.get_text(strip=True)
                     else:
-                        logging.info("No <bdi> inside <ins>, using <ins> text")
+                        logging.debug("No <bdi> inside <ins>, using <ins> text")
                         price_text = ins_element.get_text(strip=True)
                 else:
-                    logging.info("No <ins> element found")
+                    logging.debug("No <ins> element found")
                     # Si no hay <ins>, tomar el precio desde el <bdi> dentro del <span>
                     price_bdi = element.find("bdi")
                     if price_bdi:
-                        logging.info("Found <bdi> element")
+                        logging.debug("Found <bdi> element")
                         price_text = price_bdi.get_text(strip=True)
                     else:
-                        logging.info("No <bdi> element found, using direct element text")
+                        logging.debug("No <bdi> element found, using direct element text")
                         # Si no hay <bdi>, intentar extraer directamente del elemento
                         price_text = element.get_text(strip=True)
 
                 # Extraer precios del texto
-                logging.info(f"Raw extracted text for price: '{price_text}'")
+                logging.debug(f"Raw extracted text for price: '{price_text}'")
                 prices = extract_prices(price_text)
-                logging.info(f"Extracted prices from text: {prices}")
+                logging.debug(f"Extracted prices from text: {prices}")
                 
                 if not prices:
                     # Si no se encontraron precios, intentar con el texto completo del elemento
                     full_text = element.get_text(strip=True)
                     if full_text != price_text:
-                        logging.info(f"Retrying with full element text: '{full_text[:100]}...'")
+                        logging.debug(f"Retrying with full element text: '{full_text[:100]}...'")
                         prices = extract_prices(full_text)
-                        logging.info(f"Extracted prices from full text: {prices}")
+                        logging.debug(f"Extracted prices from full text: {prices}")
 
                 price_list.extend(prices)
         
-        logging.info(f"Final collected price list: {price_list}")
+        logging.debug(f"Final collected price list: {price_list}")
         if not price_list:
             price = "Price not found"
         else:
@@ -912,6 +916,38 @@ def fetch_product_details_from_soup(soup):
 
 
 
+
+    # Extract Stock
+    stock_status = "yes" # Default to yes (in stock)
+    if CHECK_STOCK:
+        for stock_tag in STOCK_TAGS:
+            if "id" in stock_tag:
+                 elements = soup.find_all(stock_tag["tag"], id=stock_tag["id"])
+            else:
+                 elements = soup.find_all(stock_tag["tag"], class_=lambda c: c and stock_tag["class"] in c)
+            
+            for element in elements:
+                text = element.get_text(separator=' ', strip=True)
+                logging.debug(f"Checking stock element text: '{text}'")
+                
+                found = False
+                for pattern in STOCK_IN_PATTERNS:
+                    if pattern.lower() in text.lower():
+                        stock_status = "yes"
+                        found = True
+                        break
+                if found: break
+                
+                for pattern in STOCK_OUT_PATTERNS:
+                     if pattern.lower() in text.lower():
+                         stock_status = "false"
+                         found = True
+                         break
+                if found: break
+            
+            if stock_status == "false": break # Stop if definitely out of stock
+
+
     # Extract title
     title = extract_title_from_soup(soup, "") # URL not needed for title extraction in this helper
 
@@ -919,114 +955,142 @@ def fetch_product_details_from_soup(soup):
         "title": title,
         "image": image,
         "description": description.strip(),
-        "price": price
+        "price": price,
+        "stock": stock_status
     }
 
 
 
-async def fetch_details(session, url, semaphore, max_retries=3):
-    async with semaphore:
-        # Aplicar rate limiting antes de cualquier petición
-        await rate_limiter.wait_if_needed()
 
-        for attempt in range(1, MAX_RATE_LIMIT_RETRIES + 1):
-            proxy = None
-            if proxy_manager.should_use_proxy():
-                proxy = proxy_manager.get_next_proxy()
+class ProductFetcher:
+    def __init__(self):
+        self.rate_limiter = RateLimiter()
+        self.proxy_manager = ProxyManager()
+        self.consecutive_429_errors = 0
 
-            try:
-                # Usar headers rotativos para cada request
-                headers = get_random_headers()
-                timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+    async def fetch_details(self, session, url, semaphore, max_retries=3):
+        async with semaphore:
+            # Aplicar rate limiting antes de cualquier petición
+            await self.rate_limiter.wait_if_needed()
 
-                async with session.get(url, timeout=timeout, headers=headers, proxy=proxy) as response:
-                    if response.status == 403:
-                        logging.warning(f"Access forbidden (403) to {url}. Attempt {attempt} of {max_retries}")
-                        if attempt < max_retries:
-                            delay = 2 ** attempt
-                            logging.info(f"Retrying {url} in {delay} seconds...")
-                            await asyncio.sleep(delay)
-                            continue
-                        else:
-                            logging.error(f"Failed to fetch {url} after {max_retries} attempts due to 403 Forbidden.")
-                            return ('discarded', {'url': url, 'title': "Access forbidden (403)", 'error': "Access forbidden (403)"})
+            for attempt in range(1, MAX_RATE_LIMIT_RETRIES + 1):
+                proxy = None
+                if self.proxy_manager.should_use_proxy():
+                    proxy = self.proxy_manager.get_next_proxy()
 
-                    elif response.status == 429:
-                        consecutive_429_errors += 1
-                        logging.warning(f"Rate limit exceeded (429) to {url}. Attempt {attempt} of {MAX_RATE_LIMIT_RETRIES}. Consecutive 429 errors: {consecutive_429_errors}")
+                try:
+                    # Usar headers rotativos para cada request
+                    headers = get_random_headers()
+                    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
 
-                        # Activar proxies automáticamente si hay muchos errores 429
-                        proxy_manager.auto_enable_proxies_on_rate_limit(consecutive_429_errors)
+                    async with session.get(url, timeout=timeout, headers=headers, proxy=proxy) as response:
+                        if response.status == 403:
+                            logging.warning(f"Access forbidden (403) to {url}. Attempt {attempt} of {max_retries}")
+                            if attempt < max_retries:
+                                delay = 2 ** attempt
+                                logging.info(f"Retrying {url} in {delay} seconds...")
+                                await asyncio.sleep(delay)
+                                continue
+                            else:
+                                logging.error(f"Failed to fetch {url} after {max_retries} attempts due to 403 Forbidden.")
+                                return ('discarded', {'url': url, 'title': "Access forbidden (403)", 'error': "Access forbidden (403)"})
 
-                        if attempt < MAX_RATE_LIMIT_RETRIES:
-                            # Generar nuevos headers aleatorios
-                            new_headers = get_random_headers()
-                            logging.info(f"New headers for retry: User-Agent: {new_headers['User-Agent']}")
-                            # Esperar con backoff exponencial mejorado para rate limit
-                            delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
-                            logging.info(f"Rate limit detected. Retrying {url} with new headers in {delay:.2f} seconds...")
-                            await asyncio.sleep(delay)
-                            # Aplicar rate limiting adicional antes del retry
-                            await rate_limiter.wait_if_needed()
-                            continue
-                        else:
-                            logging.error(f"Failed to fetch {url} after {MAX_RATE_LIMIT_RETRIES} attempts due to 429 Rate Limit.")
-                            return ('discarded', {'url': url, 'title': "Rate limit exceeded (429)", 'error': "Rate limit exceeded (429)"})
+                        elif response.status == 429:
+                            self.consecutive_429_errors += 1
+                            logging.warning(f"Rate limit exceeded (429) to {url}. Attempt {attempt} of {MAX_RATE_LIMIT_RETRIES}. Consecutive 429 errors: {self.consecutive_429_errors}")
 
-                    elif response.status != 200:
-                        logging.warning(f"Status code: {response.status}")
-                        return ('discarded', {'url': url, 'title': f"Status code: {response.status}", 'error': f"Status code: {response.status}"})
+                            # Activar proxies automáticamente si hay muchos errores 429
+                            self.proxy_manager.auto_enable_proxies_on_rate_limit(self.consecutive_429_errors)
 
-                    content = await response.text()
-                    soup = BeautifulSoup(content, 'lxml')
-                    details = fetch_product_details_from_soup(soup)
+                            if attempt < MAX_RATE_LIMIT_RETRIES:
+                                # Generar nuevos headers aleatorios
+                                new_headers = get_random_headers()
+                                logging.info(f"New headers for retry: User-Agent: {new_headers['User-Agent']}")
+                                # Esperar con backoff exponencial mejorado para rate limit
+                                delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
+                                logging.info(f"Rate limit detected. Retrying {url} with new headers in {delay:.2f} seconds...")
+                                await asyncio.sleep(delay)
+                                # Aplicar rate limiting adicional antes del retry
+                                await self.rate_limiter.wait_if_needed()
+                                continue
+                            else:
+                                logging.error(f"Failed to fetch {url} after {MAX_RATE_LIMIT_RETRIES} attempts due to 429 Rate Limit.")
+                                return ('discarded', {'url': url, 'title': "Rate limit exceeded (429)", 'error': "Rate limit exceeded (429)"})
 
-                    # Marcar proxy como exitoso y resetear contador de errores 429
-                    proxy_manager.mark_proxy_success(proxy)
-                    consecutive_429_errors = 0  # Resetear contador en petición exitosa
+                        elif response.status != 200:
+                            logging.warning(f"Status code: {response.status}")
+                            return ('discarded', {'url': url, 'title': f"Status code: {response.status}", 'error': f"Status code: {response.status}"})
 
-                    if details["price"] == "Price not found":
-                        logging.warning("Price not found")
-                        return ('discarded', {'url': url, 'title': details['title']})
+                        try:
+                            # Read bytes and try to decode with replacement for errors
+                            content_bytes = await response.read()
+                            content = content_bytes.decode('utf-8', errors='replace')
+                        except Exception as e:
+                            logging.warning(f"Error decoding content for {url}: {e}. Fallback to text() with errors='replace'")
+                            content = await response.text(errors='replace')
+                        
+                        if HTML_LOAD_DELAY > 0:
+                            logging.info(f"Waiting {HTML_LOAD_DELAY} seconds for HTML load delay...")
+                            await asyncio.sleep(HTML_LOAD_DELAY)
 
-                    return ('in_stock', {
-                        "url": url,
-                        "title": details["title"],
-                        "image": details["image"],
-                        "description": details["description"],
-                        "price": details["price"]
-                    })
+                        soup = BeautifulSoup(content, 'lxml')
+                        details = fetch_product_details_from_soup(soup)
 
-            except aiohttp.ClientHttpProxyError as e:
-                proxy_manager.mark_proxy_failed(proxy)
-                logging.error(f"Proxy error fetching details for {url} (proxy: {proxy}): {e}")
-                return ('discarded', {'url': url, 'title': 'Proxy Error', 'error': f'Proxy Error: {str(e)}'})
-            except Exception as e:
-                proxy_manager.mark_proxy_failed(proxy)
-                logging.error(f"Error fetching details for {url} (proxy: {proxy}): {e}")
-                return ('discarded', {'url': url, 'title': 'Error', 'error': str(e)})
-            
+                        # Marcar proxy como exitoso y resetear contador de errores 429
+                        self.proxy_manager.mark_proxy_success(proxy)
+                        self.consecutive_429_errors = 0  # Resetear contador en petición exitosa
+
+                        if details["price"] == "Price not found":
+                            logging.warning("Price not found")
+                            return ('discarded', {'url': url, 'title': details['title']})
+
+                        return ('in_stock', {
+                            "url": url,
+                            "title": details["title"],
+                            "image": details["image"],
+                            "description": details["description"],
+                            "price": details["price"],
+                            "stock": details["stock"]
+                        })
+
+                except aiohttp.ClientHttpProxyError as e:
+                    self.proxy_manager.mark_proxy_failed(proxy)
+                    logging.error(f"Proxy error fetching details for {url} (proxy: {proxy}): {e}")
+                    return ('discarded', {'url': url, 'title': 'Proxy Error', 'error': f'Proxy Error: {str(e)}'})
+                except Exception as e:
+                    self.proxy_manager.mark_proxy_failed(proxy)
+                    logging.error(f"Error fetching details for {url} (proxy: {proxy}): {e}")
+                    return ('discarded', {'url': url, 'title': 'Error', 'error': str(e)})
+
+    async def fetch_product_details(self, urls, max_concurrent_requests=10):
+        semaphore = asyncio.Semaphore(max_concurrent_requests)
+        connector = aiohttp.TCPConnector(limit_per_host=max_concurrent_requests)
+
+        products = []
+        discarded_products = []
+
+        async with aiohttp.ClientSession(connector=connector) as session:
+            tasks = [self.fetch_details(session, url, semaphore) for url in urls]
+            results = await asyncio.gather(*tasks)
+
+        for status, data in results:
+            if status == 'in_stock':
+                products.append(data)
+            elif status == 'discarded':
+                discarded_products.append(data)
+            else:
+                # Handle errors or other statuses if needed
+                pass
+
+        return products, discarded_products
+
+# Mantenemos una función de compatibilidad para código legado que no usa la clase,
+# pero ahora instanciará su propio fetcher temporal.
+# OJO: Esto no compartirá estado con otros llamadas.
 async def fetch_product_details(urls, max_concurrent_requests=10):
-    semaphore = asyncio.Semaphore(max_concurrent_requests)
-    connector = aiohttp.TCPConnector(limit_per_host=max_concurrent_requests)
+    fetcher = ProductFetcher()
+    return await fetcher.fetch_product_details(urls, max_concurrent_requests)
 
-    products = []
-    discarded_products = []
-
-    async with aiohttp.ClientSession(connector=connector) as session:
-        tasks = [fetch_details(session, url, semaphore) for url in urls]
-        results = await asyncio.gather(*tasks)
-
-    for status, data in results:
-        if status == 'in_stock':
-            products.append(data)
-        elif status == 'discarded':
-            discarded_products.append(data)
-        else:
-            # Handle errors or other statuses if needed
-            pass
-
-    return products, discarded_products
 
 def test_extract_text_smart():
     """
@@ -1084,6 +1148,9 @@ def test_extract_text_smart():
 
     return "No se encontró el div principal"
 
+
+# Global instance for backward compatibility (used by crawler.py)
+rate_limiter = RateLimiter()
 
 if __name__ == "__main__":
     # Sample URL to test the function

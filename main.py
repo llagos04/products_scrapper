@@ -6,14 +6,12 @@ import src.results as results
 import time
 from colorama import init, Fore, Style
 from dotenv import load_dotenv
-from CONFIG import ROOT_URL, TARGET_PRODUCTS_N, CONCURRENT_REQUESTS, GENERAL_BATCH_SIZE
+from CONFIG import ROOT_URL, TARGET_PRODUCTS_N, CONCURRENT_REQUESTS, GENERAL_BATCH_SIZE, NUM_WORKERS
 import signal
 from src.crawler import Crawler
-from src.fetcher import fetch_product_details
+from src.fetcher import ProductFetcher
 from src.results import get_execution_number, ResultsManager
 import sys
-
-
 
 load_dotenv()
 init()  # Initialize Colorama
@@ -47,7 +45,6 @@ for handler in logging.root.handlers:
 
 logging.getLogger('httpcore').setLevel(logging.WARNING)
 logging.getLogger('httpx').setLevel(logging.WARNING)
-
 
 
 def manual_sitemap_selection(sitemap, urls):
@@ -103,23 +100,112 @@ async def test_sitemap():
         import traceback
         traceback.print_exc()
 
+
+async def worker(name, url_queue, results_queue, processed_urls_set):
+    """
+    Worker task that fetches products in batches from the queue.
+    """
+    fetcher_instance = ProductFetcher()
+    logging.debug(f"Worker {name} started")
+
+    while True:
+        try:
+            # Get a batch of URLs from the queue
+            batch_urls = []
+            try:
+                # Try to get up to GENERAL_BATCH_SIZE items
+                for _ in range(GENERAL_BATCH_SIZE):
+                    url = url_queue.get_nowait()
+                    if url not in processed_urls_set:
+                        batch_urls.append(url)
+                        processed_urls_set.add(url)
+                    else:
+                        url_queue.task_done() # Already processed, mark done
+            except asyncio.QueueEmpty:
+                pass
+
+            if not batch_urls:
+                # If we didn't get any URLs but queue might not be fully empty (race condition) or just empty now
+                if url_queue.empty():
+                    break
+                else:
+                    await asyncio.sleep(0.1)
+                    continue
+
+            logging.debug(f"Worker {name} processing batch of {len(batch_urls)} URLs")
+            
+            # Fetch details
+            products, discarded = await fetcher_instance.fetch_product_details(
+                batch_urls, max_concurrent_requests=CONCURRENT_REQUESTS
+            )
+
+            # Put results in results queue
+            await results_queue.put((products, discarded))
+
+            # Mark tasks as done
+            for _ in batch_urls:
+                url_queue.task_done()
+
+        except Exception as e:
+            logging.error(f"Worker {name} error: {e}")
+            # Ensure we don't hang if there's an error, mark items as done? 
+            # Ideally we'd track exactly which ones failed, but for now we log.
+            
+    logging.debug(f"Worker {name} finished")
+
+async def results_saver(results_queue, results_manager, target_n, total_urls):
+    """
+    Task to save results from the queue to files. Safe serialization.
+    """
+    processed_count = 0
+    # Initial status
+    logging.info(f"Progress: 0/{total_urls} | Found: {results_manager.total_products} | Discarded: {results_manager.total_discarded_products}")
+
+    while True:
+        products, discarded = await results_queue.get()
+        
+        # Save Results
+        if products or discarded:
+            results_manager.append_results(products, discarded)
+            
+            # Reconstruct title info for logging processed URLs to txt
+            all_urls_titles = []
+            for p in products:
+                all_urls_titles.append({'url': p['url'], 'title': p['title']})
+            for d in discarded:
+                all_urls_titles.append({'url': d['url'], 'title': d.get('title', 'Title not found')})
+            results_manager.save_urls_to_txt(all_urls_titles)
+
+            processed_count += len(products) + len(discarded)
+            
+            # Update 'processed_count' based on what results manager knows (safer) if we tracked raw URLs there, 
+            # but here calculating local batch size is fine. 
+            # Actually, results_manager.total_products + results_manager.total_discarded_products is the most accurate truth.
+            total_processed = results_manager.total_products + results_manager.total_discarded_products
+            
+            logging.info(f"Progress: {total_processed}/{total_urls} ({total_processed/total_urls*100:.1f}%) | Found: {results_manager.total_products} | Discarded: {results_manager.total_discarded_products} | Duplicates: {results_manager.total_duplicates}" + Style.RESET_ALL)
+            
+            if results_manager.total_products >= target_n:
+                logging.info(f"Target number of products ({target_n}) reached.")
+
+        results_queue.task_done()
+
+
 async def main():
     """
     Main function to orchestrate the web scraping process.
     """
     try:
-        logging.info("Starting web scraping process...")
+        logging.info("Starting web scraping process with PARALLEL WORKERS...")
 
         # Check if the domain is JavaScript-driven
         logging.info(f"Checking if {ROOT_URL} is JavaScript-driven...")
-        is_javascript_driven = True  # Forcing JavaScript-driven for now
+        is_javascript_driven = True 
         logging.info(f"{ROOT_URL} is {'not ' if not is_javascript_driven else ''}JavaScript-driven.")
         
         # Initialize variables
-        total_products_found = 0
-        iterations = 0
-        processed_urls = set()
         start_time = time.time()
+        processed_urls = set()
 
         # Import links to ignore from ignore_links.txt
         with open('ignore_links.txt', 'r') as f:
@@ -132,104 +218,56 @@ async def main():
         execution_number = results.get_execution_number(ROOT_URL)
         results_manager = results.ResultsManager(ROOT_URL, execution_number)
 
-        # Define a signal handler for graceful shutdown
-        def signal_handler(sig, frame):
-            logging.info('You pressed Ctrl+C! Saving results and exiting...')
-            results_manager.save_results()
-            exit(0)
-        signal.signal(signal.SIGINT, signal_handler)
-
         # Fetch all URLs (from sitemap or crawling)
         logging.info(f"Fetching all URLs from {ROOT_URL}...")
 
         selected_urls = []
         
         all_sitemaps = await crawler_instance.get_all_urls()
-        # Recorrer la lista de sitemaps y sus URLs asociadas
         for sitemap_data in all_sitemaps:
             sitemap, urls = sitemap_data['sitemap'], sitemap_data['urls']
             urls_from_sitemap = manual_sitemap_selection(sitemap, urls)
             selected_urls.extend(urls_from_sitemap)
 
-        # LOG adicional: mostrar todas las URLs seleccionadas
         logging.info(f"Selected {len(selected_urls)} URLs after manual sitemap filtering.")
 
-        # Variables to keep track of counts
-        total_products_found = 0
-        total_without_stock = 0
-        total_discarded = 0
-        total_urls_processed = 0
-        total_urls_to_process = len(selected_urls)
+        if not selected_urls:
+            logging.warning("No URLs selected. Exiting.")
+            return
 
-        # Process the URLs in batches
-        while total_products_found < TARGET_PRODUCTS_N and selected_urls:
-            start_iteration_time = time.time()
-            iterations += 1
-            logging.info(Fore.GREEN + Style.BRIGHT + f"############### START ITERATION {iterations} ###############\n" + Style.RESET_ALL)
-            
-            # Get the next batch of URLs
-            batch_urls = selected_urls[:GENERAL_BATCH_SIZE]
-            selected_urls = selected_urls[GENERAL_BATCH_SIZE:]  # Remove processed URLs from the list
+        # Setup Queues
+        url_queue = asyncio.Queue()
+        for url in selected_urls:
+            url_queue.put_nowait(url)
+        
+        results_queue = asyncio.Queue()
 
-            if not batch_urls:
-                logging.info("No more URLs to process.")
-                break
+        # Start Results Saver
+        saver_task = asyncio.create_task(results_saver(results_queue, results_manager, TARGET_PRODUCTS_N, len(selected_urls)))
 
-            # Remove already processed URLs
-            batch_urls_to_process = [url for url in batch_urls if url not in processed_urls]
-            # Update processed URLs
-            processed_urls.update(batch_urls_to_process)
+        # Start Workers
+        num_workers = NUM_WORKERS
+        logging.info(f"Starting {num_workers} parallel workers...")
+        workers = []
+        for i in range(num_workers):
+            task = asyncio.create_task(worker(f"Worker-{i+1}", url_queue, results_queue, processed_urls))
+            workers.append(task)
 
+        # Wait for all URLs to be processed
+        await url_queue.join()
+        logging.info("All URLs processed by workers.")
 
-            # Fetch product details (includes title extraction now)
-            start_time_fetch_details = time.time()
-            
-            # Fetch product details directly from URLs
-            products, discarded_products = await fetcher.fetch_product_details(
-                batch_urls_to_process, max_concurrent_requests=CONCURRENT_REQUESTS
-            )
+        # Cancel workers (they are in infinite loops waiting for queue, or exited if empty)
+        for w in workers:
+            w.cancel()
+        
+        # Wait for all results to be saved
+        await results_queue.join()
+        
+        # Cancel saver
+        saver_task.cancel()
 
-            # Reconstruct title info for logging
-            all_urls_titles = []
-            for p in products:
-                all_urls_titles.append({'url': p['url'], 'title': p['title']})
-            for d in discarded_products:
-                all_urls_titles.append({'url': d['url'], 'title': d.get('title', 'Title not found')})
-            
-            # Add any URLs that completely failed (if any are missing from both lists, though fetcher handles errors by discarding)
-            # In current fetcher logic, everything returns as either product or discarded, so this cover usage.
-            
-            results_manager.save_urls_to_txt(all_urls_titles)
-
-            # Save Results
-            start_time_save_results = time.time()
-            results_manager.append_results(products, discarded_products)
-            elapsed_time_save_results = time.time() - start_time_save_results
-
-            logging.info(f"Products found: {results_manager.total_products}" + Style.RESET_ALL)
-            logging.info(f"Discarded products: {results_manager.total_discarded_products}" + Style.RESET_ALL)
-            logging.info(f"Total products processed: {results_manager.total_products + results_manager.total_discarded_products}" + Style.RESET_ALL)
-            logging.info(f"Total URLs to process: {total_urls_to_process}" + Style.RESET_ALL)
-            
-            elapsed_iteration_time = time.time() - start_iteration_time
-            logging.info(Fore.GREEN + Style.BRIGHT + f"Completed iteration {iterations} in {elapsed_iteration_time:.2f} seconds" + Style.RESET_ALL)
-            
-            # Agregar delay entre batches si hay rate limiting activado
-            if results_manager.total_products < TARGET_PRODUCTS_N and selected_urls:
-                from CONFIG import USE_RATE_LIMIT, BATCH_DELAY
-                if USE_RATE_LIMIT:
-                    logging.info(f"Rate limiting activado. Esperando {BATCH_DELAY} segundos antes del siguiente batch...")
-                    time.sleep(BATCH_DELAY)
-
-            # Check if TARGET_PRODUCTS_N is reached
-            if results_manager.total_products >= TARGET_PRODUCTS_N:
-                logging.info(f"Target number of products ({TARGET_PRODUCTS_N}) reached.")
-                break
-            if total_urls_processed >= total_urls_to_process:
-                logging.info(f"Target maximum number of products ({total_urls_to_process}) reached.")
-                break
-
-        # Final save
+        # Final save just in case
         results_manager.save_results()
 
         total_elapsed_time = time.time() - start_time
@@ -237,7 +275,6 @@ async def main():
     
     except Exception as e:
         logging.exception(f"An error occurred during the web scraping process: {e}")
-
 
 
 if __name__ == '__main__':

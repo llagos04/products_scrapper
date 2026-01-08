@@ -23,6 +23,7 @@ async def test_fetcher():
         print(f"  - Title: {p['title']}")
         print(f"  - Price: {p['price']}")
         print(f"  - Image: {p['image']}")
+        print(f"  - Stock: {p.get('stock', 'N/A')}")
         print(f"  - Description length: {len(p['description'])}")
         
     print(f"\n{Fore.YELLOW}Discarded: {len(discarded)}{Style.RESET_ALL}")

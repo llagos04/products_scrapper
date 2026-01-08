@@ -3,14 +3,14 @@
 # =============================================================================
 
 # Define the root URL of the website to scrape
-ROOT_URL = "https://todomascota.es"
+ROOT_URL = "https://www.gorillagrillz.com/"
 
 
 # Target number of products to scrape
-TARGET_PRODUCTS_N = 5000
+TARGET_PRODUCTS_N = 20000
 
 # Batch size for general processing
-GENERAL_BATCH_SIZE = 3
+GENERAL_BATCH_SIZE = 5
 
 # =============================================================================
 # 3. SELECTORS & EXTRACTION CONFIGURATION
@@ -19,7 +19,7 @@ GENERAL_BATCH_SIZE = 3
 # --- TITLE ---
 OG_TITLE = False
 TITLE_TAGS = [
-    {"tag": "h1", "id": "productNameTitle"},
+    {"tag": "h1", "class": "elementor-heading-title elementor-size-default"},
 
 ]
 TITLE_SEPARATORS = [""]
@@ -28,7 +28,7 @@ TITLE_SEPARATORS = [""]
 CHECK_PRICE = True
 LOWER_PRICE = True 
 PRICE_TAGS = [
-    {"tag": "span", "class": "AttrFinalPrice"},
+    {"tag": "span", "class": "woocommerce-Price-amount amount"}, 
 ]
 
 # --- DESCRIPTION ---
@@ -36,8 +36,16 @@ OG_DESCRIPTION = False
 MODIFY_DESCRIPTION = False
 DELETE_DESCRIPTION_CHARACTERS = ["---", "\\"]
 DESCRIPTION_TAGS = [
-    {"tag": "div", "id": "producttab-description"},
+    {"tag": "div", "class": "elementor-element elementor-element-f49edd7 e-con-full e-flex e-con e-child animated fadeIn"}, 
 ]
+
+# --- STOCK ---
+CHECK_STOCK = True
+STOCK_TAGS = [
+    {"tag": "div", "class": "stock_prod"},
+]
+STOCK_IN_PATTERNS = ["En stock"]
+STOCK_OUT_PATTERNS = ["No hay stock"]
 
 # --- IMAGES ---
 OG_IMAGE = True
@@ -50,6 +58,7 @@ IMAGE_CLASSES = [""]
 
 # Number of concurrent requests for fetching titles
 CONCURRENT_REQUESTS = 20
+NUM_WORKERS = 5 # Number of parallel workers
 
 # Request timeout in seconds
 REQUEST_TIMEOUT = 20
@@ -61,6 +70,7 @@ MAX_REQUEST_DELAY = 1.0  # Maximum delay between requests (seconds)
 BATCH_DELAY = 1.0        # Delay between batches (seconds)
 RATE_LIMIT_BACKOFF_MULTIPLIER = 2.0
 MAX_RATE_LIMIT_RETRIES = 5
+HTML_LOAD_DELAY = 0 # Delay in seconds to wait after fetching HTML (Note: this only waits, it does not execute JS with aiohttp)
 
 # --- PROXIES ---
 USE_PROXIES = False
