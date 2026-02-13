@@ -1,9 +1,10 @@
+
 # =============================================================================
 # 1. EXECUTION PARAMETERS
 # =============================================================================
 
 # Define the root URL of the website to scrape
-ROOT_URL = "https://www.gorillagrillz.com/"
+ROOT_URL = "https://www.pintarmicoche.com"
 
 
 # Target number of products to scrape
@@ -13,22 +14,22 @@ TARGET_PRODUCTS_N = 20000
 GENERAL_BATCH_SIZE = 5
 
 # =============================================================================
-# 3. SELECTORS & EXTRACTION CONFIGURATION
+# 2. SELECTORS & EXTRACTION CONFIGURATION
 # =============================================================================
 
 # --- TITLE ---
 OG_TITLE = False
 TITLE_TAGS = [
-    {"tag": "h1", "class": "elementor-heading-title elementor-size-default"},
+    {"tag": "h1", "class": "product-title product_title entry-title"},
 
 ]
 TITLE_SEPARATORS = [""]
 
 # --- PRICE ---
-CHECK_PRICE = True
+CHECK_PRICE = False
 LOWER_PRICE = True 
 PRICE_TAGS = [
-    {"tag": "span", "class": "woocommerce-Price-amount amount"}, 
+    {"tag": "div", "class": "woocommerce-Price-amount amount"},
 ]
 
 # --- DESCRIPTION ---
@@ -36,24 +37,29 @@ OG_DESCRIPTION = False
 MODIFY_DESCRIPTION = False
 DELETE_DESCRIPTION_CHARACTERS = ["---", "\\"]
 DESCRIPTION_TAGS = [
-    {"tag": "div", "class": "elementor-element elementor-element-f49edd7 e-con-full e-flex e-con e-child animated fadeIn"}, 
-]
+    {"tag": "div", "class": "large-10 col pb-0 mb-0"},
 
-# --- STOCK ---
-CHECK_STOCK = True
-STOCK_TAGS = [
-    {"tag": "div", "class": "stock_prod"},
+    
 ]
-STOCK_IN_PATTERNS = ["En stock"]
-STOCK_OUT_PATTERNS = ["No hay stock"]
 
 # --- IMAGES ---
 OG_IMAGE = True
 IMAGE_IDS = []
 IMAGE_CLASSES = [""]
 
+
+# --- STOCK ---
+CHECK_STOCK = False
+STOCK_TAGS = [
+    {"tag": "div", "class": "stock_prod"},
+]
+STOCK_IN_PATTERNS = ["En stock"]
+STOCK_OUT_PATTERNS = ["No hay stock"]
+
+
+
 # =============================================================================
-# 4. ADVANCED / NETWORK CONFIGURATION
+# 3. ADVANCED / NETWORK CONFIGURATION
 # =============================================================================
 
 # Number of concurrent requests for fetching titles

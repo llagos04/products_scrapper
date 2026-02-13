@@ -419,11 +419,26 @@ class Crawler:
             logging.info(f"Checking for sitemap in robots.txt at {self.domain}...")
 
             # Intentar obtener el sitemap desde robots.txt
-            sitemap_url = await self.get_sitemap_from_robots_txt()
+            sitemap_url_from_robots = await self.get_sitemap_from_robots_txt()
+            sitemap_data = []
 
-            if not sitemap_url:
-                # Probar ubicaciones comunes para el sitemap
+            if sitemap_url_from_robots:
+                # Obtener las URLs del sitemap usando el sitemap encontrado
+                logging.info(f"Procesando sitemap encontrado: {sitemap_url_from_robots}")
+                sitemap_data = await self.get_urls_from_sitemap_recursive(sitemap_url_from_robots)
+
+            # Si robots.txt no dio resultado o su sitemap falló/estaba vacío, probar common locations
+            if not sitemap_data:
+                if sitemap_url_from_robots:
+                    logging.warning(f"Sitemap from robots.txt ({sitemap_url_from_robots}) yielded no URLs. Checking common locations...")
+                else:
+                    logging.info("No sitemap found in robots.txt. Checking common sitemap locations...")
+
                 common_sitemap_paths = [
+    # --- WordPress Standard (WP 5.5+) ---
+    f"{self.domain}/wp-sitemap.xml",
+    f"{self.domain}/wp-sitemap-index.xml",
+
     # --- PrestaShop estándar y multilenguaje ---
     f"{self.domain}/1_index_sitemap.xml",
     f"{self.domain}/1_es_0_sitemap.xml",
@@ -493,26 +508,26 @@ class Crawler:
     f"{self.domain}/1_ro_0_sitemap.xml",
 
                 ]
-                logging.info("No sitemap found in robots.txt. Checking common sitemap locations...")
+                
+                # Check ALL common paths or stop at first found? Code below stopped at first found.
+                # However, since we want to be more robust, if we find one we should use it.
+                
                 for path in common_sitemap_paths:
+                    # Check if robots output was the same as this path to avoid double work?
+                    if sitemap_url_from_robots == path:
+                        continue 
+                    
                     if await self.url_exists(path):
                         logging.info(f"Sitemap found at {path}")
-                        sitemap_url = path
-                        break
-
-            if sitemap_url:
-                # Obtener las URLs del sitemap usando el sitemap encontrado
-                logging.info(f"Procesando sitemap encontrado: {sitemap_url}")
-                sitemap_data = await self.get_urls_from_sitemap_recursive(sitemap_url)
-
-                if sitemap_data:
-                    logging.info(f"Found {len(sitemap_data)} URLs after processing all sitemaps.")
-                    return sitemap_data
-                else:
-                    logging.info("No URLs found in sitemap.")
-                    return []
+                        sitemap_data = await self.get_urls_from_sitemap_recursive(path)
+                        if sitemap_data:
+                            break # Found a valid sitemap
+            
+            if sitemap_data:
+                logging.info(f"Found {len(sitemap_data)} URLs after processing all sitemaps.")
+                return sitemap_data
             else:
-                logging.warning("No sitemap found in robots.txt or common locations. Stopping process.")
+                logging.warning("No sitemap found in robots.txt or common locations (or they were empty).")
                 return []
         
         return []
@@ -749,112 +764,70 @@ class Crawler:
 
     async def fetch_sitemap_content(self, sitemap_url):
         """
-        Obtiene el contenido del sitemap, usando Playwright si es necesario para sitios JavaScript-driven.
+        Obtiene el contenido del sitemap.
         """
         from CONFIG import MAX_RATE_LIMIT_RETRIES
         max_retries = MAX_RATE_LIMIT_RETRIES
 
-        for attempt in range(1, max_retries + 1):
-            # Aplicar rate limiting antes de cualquier petición
-            await rate_limiter.wait_if_needed()
+        # Determine URLs to try (handle http -> https upgrade automatically)
+        urls_to_try = [sitemap_url]
+        if sitemap_url.startswith("http://"):
+            urls_to_try.append(sitemap_url.replace("http://", "https://"))
 
-            proxy = None
-            if proxy_manager.should_use_proxy():
-                proxy = proxy_manager.get_next_proxy()
+        for current_url in urls_to_try:
+            for attempt in range(1, max_retries + 1):
+                # Aplicar rate limiting antes de cualquier petición
+                await rate_limiter.wait_if_needed()
 
-            try:
-                # Usar headers aleatorios para el primer intento, y rotar en reintentos por 429
-                headers = get_random_headers() if attempt == 1 else get_random_headers()
+                proxy = None
+                if proxy_manager.should_use_proxy():
+                    proxy = proxy_manager.get_next_proxy()
 
-                # Primero intentar con HTTP normal
-                async with ClientSession(headers=headers) as session:
-                    async with session.get(sitemap_url, timeout=10, proxy=proxy) as response:
-                        if response.status == 200:
-                            content = await response.text()
-                            if self.is_xml_content(content):
+                try:
+                    # Usar headers aleatorios para el primer intento, y rotar en reintentos por 429
+                    headers = get_random_headers() if attempt == 1 else get_random_headers()
+
+                    async with ClientSession(headers=headers) as session:
+                        # Allow redirects=True by default in aiohttp
+                        async with session.get(current_url, timeout=30, proxy=proxy, ssl=False) as response:
+                            if response.status == 200:
+                                content = await response.text()
                                 proxy_manager.mark_proxy_success(proxy)
                                 from src.fetcher import consecutive_429_errors
-                                consecutive_429_errors = 0  # Resetear contador en petición exitosa
-                                logging.info(f"Successfully fetched XML sitemap with HTTP: {sitemap_url}")
+                                consecutive_429_errors = 0
+                                logging.info(f"Successfully fetched sitemap: {current_url}")
                                 return content
+
+                            elif response.status == 429:
+                                from CONFIG import MAX_RATE_LIMIT_RETRIES, RATE_LIMIT_BACKOFF_MULTIPLIER
+                                from src.fetcher import consecutive_429_errors, proxy_manager as fetcher_proxy_manager
+
+                                consecutive_429_errors += 1
+                                logging.warning(f"Rate limit exceeded (429) for sitemap {current_url}. Attempt {attempt}")
+                                fetcher_proxy_manager.auto_enable_proxies_on_rate_limit(consecutive_429_errors)
+
+                                if attempt < max_retries:
+                                    delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
+                                    logging.info(f"Retrying in {delay:.2f} seconds...")
+                                    await asyncio.sleep(delay)
+                                    continue
+                                else:
+                                    logging.error(f"Failed to fetch {current_url} after retries (429).")
+                                    # Don't break here, let the outer loop try 'https' if applicable
+                            
                             else:
-                                proxy_manager.mark_proxy_success(proxy)
-                                from src.fetcher import consecutive_429_errors
-                                consecutive_429_errors = 0  # Resetear contador en petición exitosa
-                                logging.warning(f"Sitemap contains HTML/JS content, trying with Playwright: {sitemap_url}")
-                                break  # Salir del bucle de reintentos para intentar con Playwright
-                        elif response.status == 429:
-                            from CONFIG import MAX_RATE_LIMIT_RETRIES, RATE_LIMIT_BACKOFF_MULTIPLIER
-                            from src.fetcher import consecutive_429_errors, proxy_manager as fetcher_proxy_manager
-
-                            consecutive_429_errors += 1
-                            logging.warning(f"Rate limit exceeded (429) for sitemap {sitemap_url}. Attempt {attempt} of {MAX_RATE_LIMIT_RETRIES}. Consecutive 429 errors: {consecutive_429_errors}")
-
-                            # Activar proxies automáticamente si hay muchos errores 429
-                            fetcher_proxy_manager.auto_enable_proxies_on_rate_limit(consecutive_429_errors)
-
-                            if attempt < MAX_RATE_LIMIT_RETRIES:
-                                # Generar nuevos headers aleatorios
-                                new_headers = get_random_headers()
-                                logging.info(f"New headers for retry: User-Agent: {new_headers['User-Agent']}")
-                                # Esperar con backoff exponencial mejorado para rate limit
-                                delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
-                                logging.info(f"Rate limit detected. Retrying sitemap fetch with new headers in {delay:.2f} seconds...")
-                                await asyncio.sleep(delay)
-                                # Aplicar rate limiting adicional antes del retry
-                                await rate_limiter.wait_if_needed()
-                                continue
-                            else:
-                                logging.warning(f"HTTP request failed with status 429 after retries, trying with Playwright: {sitemap_url}")
-                                break  # Salir del bucle para intentar con Playwright
-                        else:
-                            logging.warning(f"HTTP request failed with status {response.status}, trying with Playwright: {sitemap_url}")
-                            break  # Salir del bucle para intentar con Playwright
-            except aiohttp.ClientHttpProxyError as e:
-                proxy_manager.mark_proxy_failed(proxy)
-                logging.warning(f"Proxy error fetching sitemap {sitemap_url} (proxy: {proxy}): {e}, trying with Playwright")
-                break  # Salir del bucle para intentar con Playwright
-            except Exception as e:
-                proxy_manager.mark_proxy_failed(proxy)
-                logging.warning(f"HTTP request failed: {e}, trying with Playwright: {sitemap_url}")
-                break  # Salir del bucle para intentar con Playwright
-
-        # Si HTTP falló o devolvió HTML, usar Playwright
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
-                await page.goto(sitemap_url)
-                content = await page.content()
-                await browser.close()
-
-                # Extraer solo el contenido XML del HTML si es necesario
-                if not self.is_xml_content(content):
-                    # Intentar encontrar el XML dentro del HTML
-                    soup = BeautifulSoup(content, 'html.parser')
-                    # Buscar elementos que contengan XML
-                    pre_elements = soup.find_all('pre')
-                    if pre_elements:
-                        for pre in pre_elements:
-                            if self.is_xml_content(pre.text):
-                                logging.info(f"Extracted XML content from HTML pre tag for: {sitemap_url}")
-                                return pre.text
-
-                    # Si no hay pre tags, buscar en el body
-                    body = soup.find('body')
-                    if body and self.is_xml_content(body.text):
-                        logging.info(f"Extracted XML content from HTML body for: {sitemap_url}")
-                        return body.text
-
-                    # Si nada funciona, devolver el contenido tal cual pero loggear la issue
-                    logging.warning(f"Could not extract clean XML from HTML content for: {sitemap_url}")
-
-                logging.info(f"Successfully fetched sitemap with Playwright: {sitemap_url}")
-                return content
-
-        except Exception as e:
-            logging.error(f"Error fetching sitemap with Playwright {sitemap_url}: {e}")
-            return None
+                                logging.warning(f"Sitemap fetch failed with status {response.status}: {current_url}")
+                                proxy_manager.mark_proxy_failed(proxy)
+                                break # Break retry loop, try next URL variant
+                            
+                except Exception as e:
+                    proxy_manager.mark_proxy_failed(proxy)
+                    logging.warning(f"Error fetching sitemap {current_url}: {e}")
+                    # If it's a connection error, maybe allow retry?
+                    break
+        
+        logging.error(f"Could not fetch sitemap content for: {sitemap_url}")
+        return None
 
     async def get_urls_from_sitemap_recursive(self, sitemap_url, depth=0):
         """

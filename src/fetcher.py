@@ -9,6 +9,7 @@ import re
 from markdownify import markdownify as md
 import re
 from CONFIG import USE_PROXIES, AUTO_FETCH_PROXIES, USE_RATE_LIMIT, MIN_REQUEST_DELAY, MAX_REQUEST_DELAY, BATCH_DELAY, RATE_LIMIT_BACKOFF_MULTIPLIER, MAX_RATE_LIMIT_RETRIES, HTML_LOAD_DELAY
+import httpx
 
 
 class ProxyManager:
@@ -393,7 +394,11 @@ def extract_title_from_soup(soup, url):
 
     if not title:
         for entry in TITLE_TAGS:
-            title_tag = soup.find(entry["tag"], class_=entry.get("class"))
+            if entry.get("class"):
+                title_tag = soup.find(entry["tag"], class_=entry.get("class"))
+            else:
+                title_tag = soup.find(entry["tag"])
+            
             if title_tag:
                 title = title_tag.get_text(strip=True)
                 break
@@ -981,82 +986,85 @@ class ProductFetcher:
                 try:
                     # Usar headers rotativos para cada request
                     headers = get_random_headers()
-                    timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
+                    # timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
 
-                    async with session.get(url, timeout=timeout, headers=headers, proxy=proxy) as response:
-                        if response.status == 403:
-                            logging.warning(f"Access forbidden (403) to {url}. Attempt {attempt} of {max_retries}")
-                            if attempt < max_retries:
-                                delay = 2 ** attempt
-                                logging.info(f"Retrying {url} in {delay} seconds...")
-                                await asyncio.sleep(delay)
-                                continue
-                            else:
-                                logging.error(f"Failed to fetch {url} after {max_retries} attempts due to 403 Forbidden.")
-                                return ('discarded', {'url': url, 'title': "Access forbidden (403)", 'error': "Access forbidden (403)"})
+                    # async with session.get(url, timeout=timeout, headers=headers, proxy=proxy) as response:
+                    response = await session.get(url, timeout=REQUEST_TIMEOUT, headers=headers)
+                    
+                    if response.status_code == 403:
+                        logging.warning(f"Access forbidden (403) to {url}. Attempt {attempt} of {max_retries}")
+                        if attempt < max_retries:
+                            delay = 2 ** attempt
+                            logging.info(f"Retrying {url} in {delay} seconds...")
+                            await asyncio.sleep(delay)
+                            continue
+                        else:
+                            logging.error(f"Failed to fetch {url} after {max_retries} attempts due to 403 Forbidden.")
+                            return ('discarded', {'url': url, 'title': "Access forbidden (403)", 'error': "Access forbidden (403)"})
 
-                        elif response.status == 429:
-                            self.consecutive_429_errors += 1
-                            logging.warning(f"Rate limit exceeded (429) to {url}. Attempt {attempt} of {MAX_RATE_LIMIT_RETRIES}. Consecutive 429 errors: {self.consecutive_429_errors}")
+                    elif response.status_code == 429:
+                        self.consecutive_429_errors += 1
+                        logging.warning(f"Rate limit exceeded (429) to {url}. Attempt {attempt} of {MAX_RATE_LIMIT_RETRIES}. Consecutive 429 errors: {self.consecutive_429_errors}")
 
-                            # Activar proxies automáticamente si hay muchos errores 429
-                            self.proxy_manager.auto_enable_proxies_on_rate_limit(self.consecutive_429_errors)
+                        # Activar proxies automáticamente si hay muchos errores 429
+                        self.proxy_manager.auto_enable_proxies_on_rate_limit(self.consecutive_429_errors)
 
-                            if attempt < MAX_RATE_LIMIT_RETRIES:
-                                # Generar nuevos headers aleatorios
-                                new_headers = get_random_headers()
-                                logging.info(f"New headers for retry: User-Agent: {new_headers['User-Agent']}")
-                                # Esperar con backoff exponencial mejorado para rate limit
-                                delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
-                                logging.info(f"Rate limit detected. Retrying {url} with new headers in {delay:.2f} seconds...")
-                                await asyncio.sleep(delay)
-                                # Aplicar rate limiting adicional antes del retry
-                                await self.rate_limiter.wait_if_needed()
-                                continue
-                            else:
-                                logging.error(f"Failed to fetch {url} after {MAX_RATE_LIMIT_RETRIES} attempts due to 429 Rate Limit.")
-                                return ('discarded', {'url': url, 'title': "Rate limit exceeded (429)", 'error': "Rate limit exceeded (429)"})
+                        if attempt < MAX_RATE_LIMIT_RETRIES:
+                            # Generar nuevos headers aleatorios
+                            new_headers = get_random_headers()
+                            logging.info(f"New headers for retry: User-Agent: {new_headers['User-Agent']}")
+                            # Esperar con backoff exponencial mejorado para rate limit
+                            delay = (RATE_LIMIT_BACKOFF_MULTIPLIER ** attempt) + random.uniform(2, 5)
+                            logging.info(f"Rate limit detected. Retrying {url} with new headers in {delay:.2f} seconds...")
+                            await asyncio.sleep(delay)
+                            # Aplicar rate limiting adicional antes del retry
+                            await self.rate_limiter.wait_if_needed()
+                            continue
+                        else:
+                            logging.error(f"Failed to fetch {url} after {MAX_RATE_LIMIT_RETRIES} attempts due to 429 Rate Limit.")
+                            return ('discarded', {'url': url, 'title': "Rate limit exceeded (429)", 'error': "Rate limit exceeded (429)"})
 
-                        elif response.status != 200:
-                            logging.warning(f"Status code: {response.status}")
-                            return ('discarded', {'url': url, 'title': f"Status code: {response.status}", 'error': f"Status code: {response.status}"})
 
-                        try:
-                            # Read bytes and try to decode with replacement for errors
-                            content_bytes = await response.read()
-                            content = content_bytes.decode('utf-8', errors='replace')
-                        except Exception as e:
-                            logging.warning(f"Error decoding content for {url}: {e}. Fallback to text() with errors='replace'")
-                            content = await response.text(errors='replace')
+                    elif response.status_code != 200:
+                        logging.warning(f"Status code: {response.status_code}")
+                        return ('discarded', {'url': url, 'title': f"Status code: {response.status_code}", 'error': f"Status code: {response.status_code}"})
+
+                    try:
+                        # Read bytes and try to decode with replacement for errors
+                        content_bytes = response.content
+                        content = content_bytes.decode('utf-8', errors='replace')
+                    except Exception as e:
+                        logging.warning(f"Error decoding content for {url}: {e}. Fallback to text with errors='replace'")
+                        content = response.text
                         
-                        if HTML_LOAD_DELAY > 0:
-                            logging.info(f"Waiting {HTML_LOAD_DELAY} seconds for HTML load delay...")
-                            await asyncio.sleep(HTML_LOAD_DELAY)
+                    if HTML_LOAD_DELAY > 0:
+                        logging.info(f"Waiting {HTML_LOAD_DELAY} seconds for HTML load delay...")
+                        await asyncio.sleep(HTML_LOAD_DELAY)
 
-                        soup = BeautifulSoup(content, 'lxml')
-                        details = fetch_product_details_from_soup(soup)
+                    soup = BeautifulSoup(content, 'lxml')
+                    details = fetch_product_details_from_soup(soup)
 
-                        # Marcar proxy como exitoso y resetear contador de errores 429
-                        self.proxy_manager.mark_proxy_success(proxy)
-                        self.consecutive_429_errors = 0  # Resetear contador en petición exitosa
+                    # Marcar proxy como exitoso y resetear contador de errores 429
+                    self.proxy_manager.mark_proxy_success(proxy)
+                    self.consecutive_429_errors = 0  # Resetear contador en petición exitosa
 
-                        if details["price"] == "Price not found":
-                            logging.warning("Price not found")
-                            return ('discarded', {'url': url, 'title': details['title']})
+                    if details["price"] == "Price not found":
+                        logging.warning("Price not found")
+                        return ('discarded', {'url': url, 'title': details['title']})
 
-                        return ('in_stock', {
-                            "url": url,
-                            "title": details["title"],
-                            "image": details["image"],
-                            "description": details["description"],
-                            "price": details["price"],
-                            "stock": details["stock"]
-                        })
+                    return ('in_stock', {
+                        "url": url,
+                        "title": details["title"],
+                        "image": details["image"],
+                        "description": details["description"],
+                        "price": details["price"],
+                        "stock": details["stock"]
+                    })
 
-                except aiohttp.ClientHttpProxyError as e:
+                except httpx.RequestError as e:
                     self.proxy_manager.mark_proxy_failed(proxy)
-                    logging.error(f"Proxy error fetching details for {url} (proxy: {proxy}): {e}")
-                    return ('discarded', {'url': url, 'title': 'Proxy Error', 'error': f'Proxy Error: {str(e)}'})
+                    logging.error(f"Request error fetching details for {url} (proxy: {proxy}): {e}")
+                    return ('discarded', {'url': url, 'title': 'Request Error', 'error': f'Request Error: {str(e)}'})
                 except Exception as e:
                     self.proxy_manager.mark_proxy_failed(proxy)
                     logging.error(f"Error fetching details for {url} (proxy: {proxy}): {e}")
@@ -1064,12 +1072,15 @@ class ProductFetcher:
 
     async def fetch_product_details(self, urls, max_concurrent_requests=10):
         semaphore = asyncio.Semaphore(max_concurrent_requests)
-        connector = aiohttp.TCPConnector(limit_per_host=max_concurrent_requests)
+        
+        # connector = aiohttp.TCPConnector(limit_per_host=max_concurrent_requests) # Not used in httpx
 
         products = []
         discarded_products = []
+        
+        limits = httpx.Limits(max_keepalive_connections=max_concurrent_requests, max_connections=max_concurrent_requests)
 
-        async with aiohttp.ClientSession(connector=connector) as session:
+        async with httpx.AsyncClient(limits=limits, verify=False) as session:
             tasks = [self.fetch_details(session, url, semaphore) for url in urls]
             results = await asyncio.gather(*tasks)
 
