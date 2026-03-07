@@ -409,18 +409,28 @@ class Crawler:
 
 
 
-    async def get_all_urls(self):
+    async def get_all_urls(self, custom_sitemap_url=None):
         """
         Obtiene todas las URLs del sitemap, si está disponible.
         Si no se encuentra sitemap, se detiene el proceso.
         """
         if not self.sitemap_checked:
             self.sitemap_checked = True  # Solo intentamos obtener el sitemap una vez
+
+            sitemap_data = []
+
+            if custom_sitemap_url:
+                logging.info(f"Using provided sitemap URL: {custom_sitemap_url}")
+                sitemap_data = await self.get_urls_from_sitemap_recursive(custom_sitemap_url)
+                if sitemap_data:
+                    logging.info(f"Procesando sitemap proporcionado manualmente.")
+                    return sitemap_data
+                logging.warning(f"Provided sitemap ({custom_sitemap_url}) yielded no URLs. Falling back to automatic search.")
+
             logging.info(f"Checking for sitemap in robots.txt at {self.domain}...")
 
             # Intentar obtener el sitemap desde robots.txt
             sitemap_url_from_robots = await self.get_sitemap_from_robots_txt()
-            sitemap_data = []
 
             if sitemap_url_from_robots:
                 # Obtener las URLs del sitemap usando el sitemap encontrado
@@ -508,20 +518,27 @@ class Crawler:
     f"{self.domain}/1_ro_0_sitemap.xml",
 
                 ]
-                
-                # Check ALL common paths or stop at first found? Code below stopped at first found.
-                # However, since we want to be more robust, if we find one we should use it.
-                
-                for path in common_sitemap_paths:
-                    # Check if robots output was the same as this path to avoid double work?
-                    if sitemap_url_from_robots == path:
-                        continue 
+                # Iterar en lotes para comprobar concurrentemente las rutas, manteniendo el orden de prioridad
+                batch_size = 10
+                for i in range(0, len(common_sitemap_paths), batch_size):
+                    batch = [p for p in common_sitemap_paths[i:i+batch_size] if p != sitemap_url_from_robots]
+                    if not batch:
+                        continue
+                        
+                    # Comprobar concurrencia de este lote con asyncio.gather
+                    results = await asyncio.gather(*(self.url_exists(p) for p in batch))
                     
-                    if await self.url_exists(path):
-                        logging.info(f"Sitemap found at {path}")
-                        sitemap_data = await self.get_urls_from_sitemap_recursive(path)
-                        if sitemap_data:
-                            break # Found a valid sitemap
+                    found_valid_sitemap = False
+                    for path, exists in zip(batch, results):
+                        if exists:
+                            logging.info(f"Sitemap found at {path}")
+                            sitemap_data = await self.get_urls_from_sitemap_recursive(path)
+                            if sitemap_data:
+                                found_valid_sitemap = True
+                                break # Found a valid sitemap
+                                
+                    if found_valid_sitemap:
+                        break
             
             if sitemap_data:
                 logging.info(f"Found {len(sitemap_data)} URLs after processing all sitemaps.")
@@ -791,7 +808,17 @@ class Crawler:
                         # Allow redirects=True by default in aiohttp
                         async with session.get(current_url, timeout=30, proxy=proxy, ssl=False) as response:
                             if response.status == 200:
-                                content = await response.text()
+                                raw_content = await response.read()
+                                import gzip
+                                try:
+                                    content = gzip.decompress(raw_content).decode('utf-8')
+                                except Exception:
+                                    try:
+                                        charset = response.charset or 'utf-8'
+                                        content = raw_content.decode(charset)
+                                    except UnicodeDecodeError:
+                                        content = raw_content.decode('latin-1', errors='replace')
+                                        
                                 proxy_manager.mark_proxy_success(proxy)
                                 from src.fetcher import consecutive_429_errors
                                 consecutive_429_errors = 0
@@ -878,3 +905,61 @@ class Crawler:
             logging.error(f"Error processing sitemap {sitemap_url}: {e}")
             return []
 
+    async def get_manual_links(self, manual_urls, max_products_per_link):
+        """
+        Extrae enlaces desde una o varias URLs proporcionadas manualmente.
+        Útil como fallback cuando no hay sitemaps.
+        """
+        all_manual_data = []
+
+        for url in manual_urls:
+            # Ignorar URLs vacías
+            if not url.strip():
+                continue
+                
+            logging.info(f"Procesando URL manual (landing): {url}")
+            try:
+                # Reusar fetch_sitemap_content para obtener el HTML
+                content = await self.fetch_sitemap_content(url)
+                if not content:
+                    logging.warning(f"No se pudo obtener el contenido de la URL manual: {url}")
+                    continue
+
+                soup = BeautifulSoup(content, 'html.parser')
+                extracted_urls = set()
+
+                for a_tag in soup.find_all('a', href=True):
+                    href = a_tag['href']
+                    full_url = urljoin(url, href)
+                    full_url = normalize_url(full_url)
+
+                    # Verificar si es del mismo dominio y HTML
+                    if is_same_domain(self.domain, full_url) and is_html_page(full_url):
+                        # Evitar anclas a la misma página
+                        parsed_full = urlparse(full_url)
+                        parsed_base = urlparse(url)
+                        if parsed_full.path != parsed_base.path:
+                            # Filtro ignore_links
+                            skip = False
+                            for ignore_pattern in self.ignore_links:
+                                if ignore_pattern and ignore_pattern in full_url:
+                                    skip = True
+                                    break
+                            
+                            if not skip:
+                                extracted_urls.add(full_url)
+
+                extracted_list = list(extracted_urls)
+                logging.info(f"Encontrados {len(extracted_list)} enlaces totales en {url}")
+                
+                if max_products_per_link > 0 and len(extracted_list) > max_products_per_link:
+                    extracted_list = extracted_list[:max_products_per_link]
+
+                if extracted_list:
+                    all_manual_data.append({'sitemap': f"Manual: {url}", 'urls': extracted_list})
+                    logging.info(f"Seleccionados {len(extracted_list)} enlaces de {url}")
+
+            except Exception as e:
+                logging.error(f"Error procesando URL manual {url}: {e}")
+
+        return all_manual_data

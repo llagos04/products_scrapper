@@ -73,7 +73,12 @@ async def test_sitemap():
         crawler_instance = Crawler(ROOT_URL, True, [])
 
         # Obtener todos los sitemaps y URLs
-        all_sitemaps = await crawler_instance.get_all_urls()
+        try:
+            from CONFIG import SITEMAP_URL
+            custom_sitemap = SITEMAP_URL.strip() if SITEMAP_URL else None
+        except ImportError:
+            custom_sitemap = None
+        all_sitemaps = await crawler_instance.get_all_urls(custom_sitemap)
 
         print(f"\nResultado: Se encontraron {len(all_sitemaps)} sitemaps")
         print("-" * 40)
@@ -223,7 +228,20 @@ async def main():
 
         selected_urls = []
         
-        all_sitemaps = await crawler_instance.get_all_urls()
+        try:
+            from CONFIG import MANUAL_LINKS, MAX_PRODUCTS_PER_MANUAL_LINK, SITEMAP_URL
+        except ImportError:
+            from CONFIG import MANUAL_LINKS, MAX_PRODUCTS_PER_MANUAL_LINK
+            SITEMAP_URL = ""
+        
+        # Si hay enlaces manuales, usarlos directamente y no buscar sitemaps
+        if MANUAL_LINKS and any(MANUAL_LINKS):
+            logging.info("MANUAL_LINKS detectados. Omitiendo búsqueda de sitemaps...")
+            all_sitemaps = await crawler_instance.get_manual_links(MANUAL_LINKS, MAX_PRODUCTS_PER_MANUAL_LINK)
+        else:
+            custom_sitemap = SITEMAP_URL.strip() if SITEMAP_URL else None
+            all_sitemaps = await crawler_instance.get_all_urls(custom_sitemap)
+
         for sitemap_data in all_sitemaps:
             sitemap, urls = sitemap_data['sitemap'], sitemap_data['urls']
             urls_from_sitemap = manual_sitemap_selection(sitemap, urls)

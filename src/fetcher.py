@@ -395,9 +395,12 @@ def extract_title_from_soup(soup, url):
     if not title:
         for entry in TITLE_TAGS:
             if entry.get("class"):
-                title_tag = soup.find(entry["tag"], class_=entry.get("class"))
+                title_tag = soup.find(entry["tag"], class_=lambda c: c and entry["class"] in c)
+            elif entry.get("id"):
+                title_tag = soup.find(entry["tag"], id=entry["id"])
             else:
-                title_tag = soup.find(entry["tag"])
+                attrs = {k: v for k, v in entry.items() if k != "tag"}
+                title_tag = soup.find(entry["tag"], attrs=attrs) if attrs else soup.find(entry["tag"])
             
             if title_tag:
                 title = title_tag.get_text(strip=True)
@@ -774,7 +777,6 @@ def fetch_product_details_from_soup(soup):
         for desc_tag in DESCRIPTION_TAGS:
             logging.debug({'Se va a procesar': desc_tag})
 
-            # Determinar si buscar por 'class' o 'id'
             if "class" in desc_tag:
                 # Buscar todos los elementos que coincidan con el tag y cuya clase contenga la clase especificada
                 elements = soup.find_all(desc_tag["tag"], class_=lambda c: c and desc_tag["class"] in c)
@@ -782,8 +784,9 @@ def fetch_product_details_from_soup(soup):
                 # Buscar todos los elementos que coincidan con el tag y el id especificado
                 elements = soup.find_all(desc_tag["tag"], id=desc_tag["id"])
             else:
-                # Si no hay ni 'class' ni 'id', buscar solo por el tag
-                elements = soup.find_all(desc_tag["tag"])
+                # Si no hay ni 'class' ni 'id', buscar por otros atributos (ej: itemprop) o solo por el tag
+                attrs = {k: v for k, v in desc_tag.items() if k != "tag"}
+                elements = soup.find_all(desc_tag["tag"], attrs=attrs) if attrs else soup.find_all(desc_tag["tag"])
 
             logging.debug({'Número de elementos encontrados': len(elements)})
 
@@ -850,15 +853,20 @@ def fetch_product_details_from_soup(soup):
         for i, price_tag in enumerate(PRICE_TAGS):
             logging.debug(f"Checking tag {i+1}/{len(PRICE_TAGS)}: {price_tag}")
             
-            # Si el precio se encuentra por 'id' además de por 'class'
+            # Buscar atributos
             if "id" in price_tag:
                 # Buscar por id también
                 elements = soup.find_all(price_tag["tag"], id=price_tag["id"])
                 logging.debug(f"Found {len(elements)} elements by ID '{price_tag['id']}'")
-            else:
+            elif "class" in price_tag:
                 # Buscar solo por clase
                 elements = soup.find_all(price_tag["tag"], class_=lambda c: c and price_tag["class"] in c)
                 logging.debug(f"Found {len(elements)} elements by Class '{price_tag['class']}'")
+            else:
+                # Buscar por otros atributos (ej. itemprop)
+                attrs = {k: v for k, v in price_tag.items() if k != "tag"}
+                elements = soup.find_all(price_tag["tag"], attrs=attrs) if attrs else soup.find_all(price_tag["tag"])
+                logging.debug(f"Found {len(elements)} elements by attrs '{attrs}'")
 
             for j, element in enumerate(elements):
                 logging.debug(f"Processing element {j+1}/{len(elements)}")
@@ -928,8 +936,11 @@ def fetch_product_details_from_soup(soup):
         for stock_tag in STOCK_TAGS:
             if "id" in stock_tag:
                  elements = soup.find_all(stock_tag["tag"], id=stock_tag["id"])
-            else:
+            elif "class" in stock_tag:
                  elements = soup.find_all(stock_tag["tag"], class_=lambda c: c and stock_tag["class"] in c)
+            else:
+                 attrs = {k: v for k, v in stock_tag.items() if k != "tag"}
+                 elements = soup.find_all(stock_tag["tag"], attrs=attrs) if attrs else soup.find_all(stock_tag["tag"])
             
             for element in elements:
                 text = element.get_text(separator=' ', strip=True)
@@ -1080,7 +1091,7 @@ class ProductFetcher:
         
         limits = httpx.Limits(max_keepalive_connections=max_concurrent_requests, max_connections=max_concurrent_requests)
 
-        async with httpx.AsyncClient(limits=limits, verify=False) as session:
+        async with httpx.AsyncClient(limits=limits, verify=False, follow_redirects=True) as session:
             tasks = [self.fetch_details(session, url, semaphore) for url in urls]
             results = await asyncio.gather(*tasks)
 
