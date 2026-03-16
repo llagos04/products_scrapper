@@ -732,9 +732,13 @@ class Crawler:
 
             elif parser_name in ["lxml", "etree"]:
                 # Para lxml y etree, usar xpath con namespaces
-                ns = {'sitemap': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
-                url_elements = root.findall('.//sitemap:url/sitemap:loc', ns)
-                urls = [url_elem.text for url_elem in url_elements if url_elem.text]
+                # Try both http and https namespace variants
+                for ns_url in ['http://www.sitemaps.org/schemas/sitemap/0.9', 'https://www.sitemaps.org/schemas/sitemap/0.9']:
+                    ns = {'sitemap': ns_url}
+                    url_elements = root.findall('.//sitemap:url/sitemap:loc', ns)
+                    urls = [url_elem.text for url_elem in url_elements if url_elem.text]
+                    if urls:
+                        break
 
         except Exception as e:
             logging.error(f"Error extracting URLs from parsed XML: {e}")
@@ -757,12 +761,16 @@ class Crawler:
                         secondary_sitemaps.append(loc.text)
 
             elif parser_name in ["lxml", "etree"]:
-                ns = {'sitemap': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
-                sitemap_elements = root.findall('.//sitemap:sitemap', ns)
-                for sitemap in sitemap_elements:
-                    loc_elem = sitemap.find('.//sitemap:loc', ns)
-                    if loc_elem is not None and loc_elem.text:
-                        secondary_sitemaps.append(loc_elem.text)
+                # Try both http and https namespace variants
+                for ns_url in ['http://www.sitemaps.org/schemas/sitemap/0.9', 'https://www.sitemaps.org/schemas/sitemap/0.9']:
+                    ns = {'sitemap': ns_url}
+                    sitemap_elements = root.findall('.//sitemap:sitemap', ns)
+                    for sitemap in sitemap_elements:
+                        loc_elem = sitemap.find('.//sitemap:loc', ns)
+                        if loc_elem is not None and loc_elem.text:
+                            secondary_sitemaps.append(loc_elem.text)
+                    if secondary_sitemaps:
+                        break
 
         except Exception as e:
             logging.error(f"Error extracting secondary sitemaps: {e}")

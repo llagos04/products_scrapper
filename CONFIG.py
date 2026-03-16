@@ -3,10 +3,11 @@
 # =============================================================================
 
 # Define the root URL of the website to scrape
-ROOT_URL = "https://www.cristianlay.com/"
+ROOT_URL = "https://newnails.shop/"
 
 # Directly specify the sitemap URL (bypass robots.txt search). Leave empty to search automatically.
 SITEMAP_URL = ""
+
 
 
 # Target number of products to scrape
@@ -21,18 +22,17 @@ GENERAL_BATCH_SIZE = 5
 # Used when no sitemap is found. The scraper will extract up to MAX_PRODUCTS_PER_MANUAL_LINK
 # products from each of these landing pages.
 MANUAL_LINKS = [
-    "https://www.cristianlay.com/es/Productos/cosmetica/cuidado-facial/cremas-faciales/c/006-004-001", "https://www.cristianlay.com/es/Productos/cosmetica/cuidado-corporal/cuidado-pies/c/006-005-004", "https://www.cristianlay.com/es/Productos/Joyas-de-Oro/Pulseras-y-Tobilleras-de-Oro/c/011-006", "https://www.cristianlay.com/es/Productos/Joyas-de-Plata/Anillos-de-Plata/c/012-005",
 ]
-MAX_PRODUCTS_PER_MANUAL_LINK = 200
+MAX_PRODUCTS_PER_MANUAL_LINK = 900
 
 # =============================================================================
 # 2. SELECTORS & EXTRACTION CONFIGURATION
 # =============================================================================
 
 # --- TITLE ---
-OG_TITLE = True
+OG_TITLE = False
 TITLE_TAGS = [
-    {"tag": "h1", "class": "name-product"},
+    {"tag": "h1", "class": "product_title entry-title wd-entities-title"},
 
 ]
 TITLE_SEPARATORS = [""]
@@ -41,7 +41,7 @@ TITLE_SEPARATORS = [""]
 CHECK_PRICE = True
 LOWER_PRICE = False 
 PRICE_TAGS = [
-    {"tag": "div", "class": "product-price"},
+    {"tag": "span", "class": "woocommerce-Price-amount amount"},
 ]
 
 # --- DESCRIPTION ---
@@ -49,14 +49,22 @@ OG_DESCRIPTION = False
 MODIFY_DESCRIPTION = False
 DELETE_DESCRIPTION_CHARACTERS = ["---", "\\"]
 DESCRIPTION_TAGS = [
-    {"tag": "div", "class": "product-info"},
+    {"tag": "div", "class": "woocommerce-product-details__short-description"},
+    {"tag": "div", "class": "woocommerce-tabs wc-tabs-wrapper tabs-layout-tabs"},
+
     
 ]
 
+# --- SUPPORT LINKS ---
+SUPPORT_LINKS_TAGS = [
+]
+
+
 # --- IMAGES ---
 OG_IMAGE = True
-IMAGE_IDS = []
-IMAGE_CLASSES = [""]
+IMAGE_TAGS = [
+    {"tag": "img", "class": "gc-display-display"}
+]
 
 
 # --- STOCK ---
@@ -66,7 +74,6 @@ STOCK_TAGS = [
 ]
 STOCK_IN_PATTERNS = ["En stock"]
 STOCK_OUT_PATTERNS = ["No hay stock"]
-
 
 
 # =============================================================================
@@ -84,7 +91,7 @@ REQUEST_TIMEOUT = 5
 USE_RATE_LIMIT = True
 MIN_REQUEST_DELAY = 1.0  # Minimum delay between requests (seconds)
 MAX_REQUEST_DELAY = 1.0  # Maximum delay between requests (seconds)
-BATCH_DELAY = 3.0        # Delay between batches (seconds)
+BATCH_DELAY = 1.0        # Delay between batches (seconds)
 RATE_LIMIT_BACKOFF_MULTIPLIER = 2.0
 MAX_RATE_LIMIT_RETRIES = 5
 HTML_LOAD_DELAY = 0 # Delay in seconds to wait after fetching HTML (Note: this only waits, it does not execute JS with aiohttp)

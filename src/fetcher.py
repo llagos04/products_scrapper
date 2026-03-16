@@ -4,7 +4,7 @@ import time
 import random
 from bs4 import BeautifulSoup
 import aiohttp
-from CONFIG import IMAGE_CLASSES, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, LOWER_PRICE, OG_IMAGE, OG_DESCRIPTION, OG_TITLE, REQUEST_TIMEOUT, TITLE_SEPARATORS, MODIFY_DESCRIPTION, DELETE_DESCRIPTION_CHARACTERS, CHECK_PRICE, IMAGE_IDS, ROOT_URL, CHECK_STOCK, STOCK_TAGS, STOCK_IN_PATTERNS, STOCK_OUT_PATTERNS
+from CONFIG import IMAGE_TAGS, TITLE_TAGS, DESCRIPTION_TAGS, PRICE_TAGS, LOWER_PRICE, OG_IMAGE, OG_DESCRIPTION, OG_TITLE, REQUEST_TIMEOUT, TITLE_SEPARATORS, MODIFY_DESCRIPTION, DELETE_DESCRIPTION_CHARACTERS, CHECK_PRICE, ROOT_URL, CHECK_STOCK, STOCK_TAGS, STOCK_IN_PATTERNS, STOCK_OUT_PATTERNS, SUPPORT_LINKS_TAGS
 import re
 from markdownify import markdownify as md
 import re
@@ -395,11 +395,11 @@ def extract_title_from_soup(soup, url):
     if not title:
         for entry in TITLE_TAGS:
             if entry.get("class"):
-                title_tag = soup.find(entry["tag"], class_=lambda c: c and entry["class"] in c)
+                title_tag = soup.find(entry["tag"], class_=lambda c: c and all(cls in c for cls in entry["class"].split()))
             elif entry.get("id"):
                 title_tag = soup.find(entry["tag"], id=entry["id"])
             else:
-                attrs = {k: v for k, v in entry.items() if k != "tag"}
+                attrs = {k: v for k, v in entry.items() if k != "tag" and v}
                 title_tag = soup.find(entry["tag"], attrs=attrs) if attrs else soup.find(entry["tag"])
             
             if title_tag:
@@ -505,7 +505,6 @@ def extract_prices(text):
                     clean_val = m.replace(',', '')
                     try: val = float(clean_val)
                     except: pass
-                    currency = '$' # If it looks like US format, maybe default to $?
             elif ',' in m: # Solo comas: 17,90 o 1,234
                 clean_val = m.replace(',', '.')
                 try: val = float(clean_val)
@@ -514,7 +513,6 @@ def extract_prices(text):
                 if re.search(r'\.\d{2}$', m):
                      try: val = float(m)
                      except: pass
-                     currency = '$' # Likely US format
             
             if val is not None:
                 prices.append((val, currency))
@@ -525,7 +523,7 @@ def extract_prices(text):
     
     final_prices = []
     for p, c in prices:
-        if 0.01 <= p <= 100000:
+        if 0.01 <= p <= 100000000:
             final_prices.append((p, c))
             
     return final_prices
@@ -689,16 +687,42 @@ def fetch_product_details_from_soup(soup):
         if meta_image:
             image = meta_image.get("content", "").strip()
 
-    # Prioridad 2: Buscar por IDs específicos (IMAGE_IDS)
+    # Prioridad 2: Buscar usando IMAGE_TAGS
     if not image:
-        for img_id in IMAGE_IDS:
-            img_tag = soup.find("img", id=img_id)
-            if img_tag:
-                image = img_tag.get("src", "").strip()
-
-
-                if image:
-                    break
+        for img_tag in IMAGE_TAGS:
+            if img_tag.get("class"):
+                elements = soup.find_all(img_tag["tag"], class_=lambda c: c and all(cls in c for cls in img_tag["class"].split()))
+            elif img_tag.get("id"):
+                elements = soup.find_all(img_tag["tag"], id=img_tag["id"])
+            else:
+                attrs = {k: v for k, v in img_tag.items() if k != "tag" and v}
+                elements = soup.find_all(img_tag["tag"], attrs=attrs) if attrs else soup.find_all(img_tag["tag"])
+            
+            # Especial para gc-display-display que se añade por JS
+            if not elements and img_tag.get("class") and "gc-display-display" in img_tag["class"]:
+                elements = soup.find_all("ul", class_="gc-start")
+                if not elements:
+                    elements = soup.find_all("ul", id="glasscase")
+            
+            for img_el in elements:
+                if img_el.name not in ['img', 'a']:
+                    inner_img = img_el.find('img')
+                    if inner_img:
+                        img_el = inner_img
+                
+                src_attr = img_el.get("src") or img_el.get("data-src") or img_el.get("data-original")
+                if img_el.name == 'a' and not src_attr:
+                    src_attr = img_el.get("href")
+                
+                if src_attr:
+                    candidate = src_attr.strip()
+                    if candidate.startswith('/') and ROOT_URL:
+                        candidate = ROOT_URL.rstrip('/') + candidate
+                    image = candidate
+                    if image:
+                        break
+            if image:
+                break
 
     # Prioridad 3: easyzoom-product (divs con imágenes)
     if not image:
@@ -706,9 +730,9 @@ def fetch_product_details_from_soup(soup):
         image_urls = []
 
         for div in easyzoom_divs:
-            img_tag = div.find("a", class_="js-easyzoom-trigger")
-            if img_tag and img_tag.get("href"):
-                image_urls.append(img_tag.get("href").strip())
+            ez_img_tag = div.find("a", class_="js-easyzoom-trigger")
+            if ez_img_tag and ez_img_tag.get("href"):
+                image_urls.append(ez_img_tag.get("href").strip())
 
         if image_urls:
             image = image_urls[0]
@@ -725,33 +749,6 @@ def fetch_product_details_from_soup(soup):
                 image = href
                 logging.info(f"Imagen encontrada via cloud-zoom: {image}")
                 break
-
-    # Prioridad 4: IMAGE_CLASSES (respaldo)
-    if not image:
-        for img_class in IMAGE_CLASSES:
-            # 4.a) Buscar primero <img> con las clases configuradas
-            img_el = soup.find("img", class_=lambda c: c and all(cls in c for cls in img_class.split()))
-            if img_el:
-                src_attr = img_el.get("src") or img_el.get("data-src") or img_el.get("data-original")
-                if src_attr:
-                    candidate = src_attr.strip()
-                    # Resolver URL relativa comenzando por '/'
-                    if candidate.startswith('/') and ROOT_URL:
-                        candidate = ROOT_URL.rstrip('/') + candidate
-                    image = candidate
-                    if image:
-                        break
-
-            # 4.b) Como alternativa, buscar <a> con esas clases y tomar href
-            a_el = soup.find("a", class_=lambda c: c and all(cls in c for cls in img_class.split()))
-            if a_el:
-                href = a_el.get("href", "").strip()
-                if href:
-                    if href.startswith('/') and ROOT_URL:
-                        href = ROOT_URL.rstrip('/') + href
-                    image = href
-                    if image:
-                        break
 
     # Prioridad 5: Custom pattern - buscar imágenes con patrón configurable
 
@@ -777,15 +774,15 @@ def fetch_product_details_from_soup(soup):
         for desc_tag in DESCRIPTION_TAGS:
             logging.debug({'Se va a procesar': desc_tag})
 
-            if "class" in desc_tag:
+            if desc_tag.get("class"):
                 # Buscar todos los elementos que coincidan con el tag y cuya clase contenga la clase especificada
-                elements = soup.find_all(desc_tag["tag"], class_=lambda c: c and desc_tag["class"] in c)
-            elif "id" in desc_tag:
+                elements = soup.find_all(desc_tag["tag"], class_=lambda c: c and all(cls in c for cls in desc_tag["class"].split()))
+            elif desc_tag.get("id"):
                 # Buscar todos los elementos que coincidan con el tag y el id especificado
                 elements = soup.find_all(desc_tag["tag"], id=desc_tag["id"])
             else:
                 # Si no hay ni 'class' ni 'id', buscar por otros atributos (ej: itemprop) o solo por el tag
-                attrs = {k: v for k, v in desc_tag.items() if k != "tag"}
+                attrs = {k: v for k, v in desc_tag.items() if k != "tag" and v}
                 elements = soup.find_all(desc_tag["tag"], attrs=attrs) if attrs else soup.find_all(desc_tag["tag"])
 
             logging.debug({'Número de elementos encontrados': len(elements)})
@@ -854,17 +851,17 @@ def fetch_product_details_from_soup(soup):
             logging.debug(f"Checking tag {i+1}/{len(PRICE_TAGS)}: {price_tag}")
             
             # Buscar atributos
-            if "id" in price_tag:
+            if price_tag.get("id"):
                 # Buscar por id también
                 elements = soup.find_all(price_tag["tag"], id=price_tag["id"])
                 logging.debug(f"Found {len(elements)} elements by ID '{price_tag['id']}'")
-            elif "class" in price_tag:
+            elif price_tag.get("class"):
                 # Buscar solo por clase
-                elements = soup.find_all(price_tag["tag"], class_=lambda c: c and price_tag["class"] in c)
+                elements = soup.find_all(price_tag["tag"], class_=lambda c: c and all(cls in c for cls in price_tag["class"].split()))
                 logging.debug(f"Found {len(elements)} elements by Class '{price_tag['class']}'")
             else:
                 # Buscar por otros atributos (ej. itemprop)
-                attrs = {k: v for k, v in price_tag.items() if k != "tag"}
+                attrs = {k: v for k, v in price_tag.items() if k != "tag" and v}
                 elements = soup.find_all(price_tag["tag"], attrs=attrs) if attrs else soup.find_all(price_tag["tag"])
                 logging.debug(f"Found {len(elements)} elements by attrs '{attrs}'")
 
@@ -934,12 +931,12 @@ def fetch_product_details_from_soup(soup):
     stock_status = "yes" # Default to yes (in stock)
     if CHECK_STOCK:
         for stock_tag in STOCK_TAGS:
-            if "id" in stock_tag:
+            if stock_tag.get("id"):
                  elements = soup.find_all(stock_tag["tag"], id=stock_tag["id"])
-            elif "class" in stock_tag:
-                 elements = soup.find_all(stock_tag["tag"], class_=lambda c: c and stock_tag["class"] in c)
+            elif stock_tag.get("class"):
+                 elements = soup.find_all(stock_tag["tag"], class_=lambda c: c and all(cls in c for cls in stock_tag["class"].split()))
             else:
-                 attrs = {k: v for k, v in stock_tag.items() if k != "tag"}
+                 attrs = {k: v for k, v in stock_tag.items() if k != "tag" and v}
                  elements = soup.find_all(stock_tag["tag"], attrs=attrs) if attrs else soup.find_all(stock_tag["tag"])
             
             for element in elements:
@@ -964,6 +961,27 @@ def fetch_product_details_from_soup(soup):
             if stock_status == "false": break # Stop if definitely out of stock
 
 
+    # Extract Support Links
+    support_links_list = []
+    for tag in SUPPORT_LINKS_TAGS:
+        if tag.get("class"):
+            elements = soup.find_all(tag["tag"], class_=lambda c: c and all(cls in c for cls in tag["class"].split()))
+        elif tag.get("id"):
+            elements = soup.find_all(tag["tag"], id=tag["id"])
+        else:
+            attrs = {k: v for k, v in tag.items() if k != "tag" and v}
+            elements = soup.find_all(tag["tag"], attrs=attrs) if attrs else soup.find_all(tag["tag"])
+            
+        for el in elements:
+            href = el.get("href")
+            if href:
+                if href.startswith('/') and ROOT_URL:
+                    href = ROOT_URL.rstrip('/') + href
+                if href not in support_links_list:
+                    support_links_list.append(href)
+    
+    extracted_support_links = ", ".join(support_links_list) if support_links_list else ""
+
     # Extract title
     title = extract_title_from_soup(soup, "") # URL not needed for title extraction in this helper
 
@@ -972,7 +990,8 @@ def fetch_product_details_from_soup(soup):
         "image": image,
         "description": description.strip(),
         "price": price,
-        "stock": stock_status
+        "stock": stock_status,
+        "support_links": extracted_support_links
     }
 
 
@@ -1069,7 +1088,8 @@ class ProductFetcher:
                         "image": details["image"],
                         "description": details["description"],
                         "price": details["price"],
-                        "stock": details["stock"]
+                        "stock": details["stock"],
+                        "support_links": details["support_links"]
                     })
 
                 except httpx.RequestError as e:

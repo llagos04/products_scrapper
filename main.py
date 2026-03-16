@@ -183,12 +183,15 @@ async def results_saver(results_queue, results_manager, target_n, total_urls):
 
             processed_count += len(products) + len(discarded)
             
-            # Update 'processed_count' based on what results manager knows (safer) if we tracked raw URLs there, 
-            # but here calculating local batch size is fine. 
-            # Actually, results_manager.total_products + results_manager.total_discarded_products is the most accurate truth.
-            total_processed = results_manager.total_products + results_manager.total_discarded_products
+            # Update 'processed_count' based on what results manager knows
+            total_processed = results_manager.total_products + results_manager.total_discarded_products + results_manager.total_duplicates
             
-            logging.info(f"Progress: {total_processed}/{total_urls} ({total_processed/total_urls*100:.1f}%) | Found: {results_manager.total_products} | Discarded: {results_manager.total_discarded_products} | Duplicates: {results_manager.total_duplicates}" + Style.RESET_ALL)
+            # Formatear la barra de progreso
+            bar_length = 30
+            filled_len = int(bar_length * total_processed // total_urls)
+            bar = '█' * filled_len + '-' * (bar_length - filled_len)
+            
+            logging.info(f"Progress: [{bar}] {total_processed}/{total_urls} ({total_processed/total_urls*100:.1f}%) | Found: {results_manager.total_products} | Discarded: {results_manager.total_discarded_products} | Duplicates: {results_manager.total_duplicates}" + Style.RESET_ALL)
             
             if results_manager.total_products >= target_n:
                 logging.info(f"Target number of products ({target_n}) reached.")
