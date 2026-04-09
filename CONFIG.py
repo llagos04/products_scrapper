@@ -3,7 +3,7 @@
 # =============================================================================
 
 # Define the root URL of the website to scrape
-ROOT_URL = "https://newnails.shop/"
+ROOT_URL = "https://www.envaseonline.com/"
 
 # Directly specify the sitemap URL (bypass robots.txt search). Leave empty to search automatically.
 SITEMAP_URL = ""
@@ -11,7 +11,7 @@ SITEMAP_URL = ""
 
 
 # Target number of products to scrape
-TARGET_PRODUCTS_N = 20000
+TARGET_PRODUCTS_N = 1000
 
 # Batch size for general processing
 GENERAL_BATCH_SIZE = 5
@@ -32,16 +32,15 @@ MAX_PRODUCTS_PER_MANUAL_LINK = 900
 # --- TITLE ---
 OG_TITLE = False
 TITLE_TAGS = [
-    {"tag": "h1", "class": "product_title entry-title wd-entities-title"},
-
+    {"tag": "h1", "class": "page-title"},
 ]
 TITLE_SEPARATORS = [""]
 
 # --- PRICE ---
-CHECK_PRICE = True
+CHECK_PRICE = False
 LOWER_PRICE = False 
 PRICE_TAGS = [
-    {"tag": "span", "class": "woocommerce-Price-amount amount"},
+    {"tag": "span", "class": "textPreuDesde"},
 ]
 
 # --- DESCRIPTION ---
@@ -49,10 +48,9 @@ OG_DESCRIPTION = False
 MODIFY_DESCRIPTION = False
 DELETE_DESCRIPTION_CHARACTERS = ["---", "\\"]
 DESCRIPTION_TAGS = [
-    {"tag": "div", "class": "woocommerce-product-details__short-description"},
-    {"tag": "div", "class": "woocommerce-tabs wc-tabs-wrapper tabs-layout-tabs"},
+    {"tag": "div", "class": "product data items mage-tabs-disabled"},
+    {"tag": "div", "itemprop": "description"},
 
-    
 ]
 
 # --- SUPPORT LINKS ---
@@ -63,7 +61,7 @@ SUPPORT_LINKS_TAGS = [
 # --- IMAGES ---
 OG_IMAGE = True
 IMAGE_TAGS = [
-    {"tag": "img", "class": "gc-display-display"}
+    {"tag": "img", "class": "fotorama__img"}
 ]
 
 
@@ -82,10 +80,10 @@ STOCK_OUT_PATTERNS = ["No hay stock"]
 
 # Number of concurrent requests for fetching titles
 CONCURRENT_REQUESTS = 20
-NUM_WORKERS = 1 # Number of parallel workers
+NUM_WORKERS = 5 # Number of parallel workers
 
 # Request timeout in seconds
-REQUEST_TIMEOUT = 5
+REQUEST_TIMEOUT = 20
 
 # --- RATE LIMITING ---
 USE_RATE_LIMIT = True
