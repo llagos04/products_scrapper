@@ -705,12 +705,23 @@ def fetch_product_details_from_soup(soup):
                     elements = soup.find_all("ul", id="glasscase")
             
             for img_el in elements:
+                src_attr = None
                 if img_el.name not in ['img', 'a']:
-                    inner_img = img_el.find('img')
-                    if inner_img:
-                        img_el = inner_img
+                    # First try to get the full-size image from a child <a> href
+                    inner_a = img_el.find('a')
+                    if inner_a and inner_a.get("href"):
+                        href = inner_a.get("href", "").strip()
+                        # Check if href points to an image file
+                        if any(href.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg']):
+                            src_attr = href
+                    # Fallback to inner <img> tag
+                    if not src_attr:
+                        inner_img = img_el.find('img')
+                        if inner_img:
+                            img_el = inner_img
                 
-                src_attr = img_el.get("src") or img_el.get("data-src") or img_el.get("data-original")
+                if not src_attr:
+                    src_attr = img_el.get("src") or img_el.get("data-src") or img_el.get("data-original")
                 if img_el.name == 'a' and not src_attr:
                     src_attr = img_el.get("href")
                 
@@ -718,6 +729,8 @@ def fetch_product_details_from_soup(soup):
                     candidate = src_attr.strip()
                     if candidate.startswith('/') and ROOT_URL:
                         candidate = ROOT_URL.rstrip('/') + candidate
+                    elif not candidate.startswith(('http://', 'https://')) and ROOT_URL:
+                        candidate = ROOT_URL.rstrip('/') + '/' + candidate
                     image = candidate
                     if image:
                         break

@@ -1,9 +1,9 @@
 import os
+import tempfile
 import pandas as pd
 import shutil
 import logging
 from CONFIG import ROOT_URL
-import logging
 
 class ResultsManager:
     def __init__(self, root_url, execution_number):
@@ -84,6 +84,7 @@ class ResultsManager:
     def save_to_excel(self, product, excel_file):
         """
         Save products to the corresponding Excel file.
+        Uses atomic write (temp file + rename) to prevent corruption on interruption.
         """
         # Create a DataFrame from the product
         df = pd.DataFrame([product])
@@ -91,18 +92,32 @@ class ResultsManager:
         df = df[['name', 'description', 'price', 'stock', 'url', 'image_url', 'support_links']]
         df['keywords'] = df['name']
 
-        # Save to Excel
+        # Build the final DataFrame
         if os.path.exists(excel_file):
             existing_df = pd.read_excel(excel_file)
             combined_df = pd.concat([existing_df, df], ignore_index=True)
             combined_df.drop_duplicates(subset=['name'], inplace=True)
-            combined_df.to_excel(excel_file, index=False)
         else:
-            df.to_excel(excel_file, index=False)
+            combined_df = df
+
+        # Atomic write: write to temp file first, then replace
+        dir_name = os.path.dirname(excel_file)
+        try:
+            fd, tmp_path = tempfile.mkstemp(suffix='.xlsx', dir=dir_name)
+            os.close(fd)
+            combined_df.to_excel(tmp_path, index=False)
+            # Replace original with temp file (atomic on same filesystem)
+            shutil.move(tmp_path, excel_file)
+        except Exception:
+            # Clean up temp file if something went wrong
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
 
     def save_to_excel_bulk(self, products, excel_file):
         """
         Save a list of products to the specified Excel file.
+        Uses atomic write (temp file + rename) to prevent corruption on interruption.
         """
         if not products:
             return
@@ -113,14 +128,25 @@ class ResultsManager:
         df = df[['name', 'description', 'price', 'stock', 'url', 'image_url', 'support_links']]
         df['keywords'] = df['name']
 
-        # Save to Excel
+        # Build the final DataFrame
         if os.path.exists(excel_file):
             existing_df = pd.read_excel(excel_file)
             combined_df = pd.concat([existing_df, df], ignore_index=True)
             combined_df.drop_duplicates(subset=['name'], inplace=True)
-            combined_df.to_excel(excel_file, index=False)
         else:
-            df.to_excel(excel_file, index=False)
+            combined_df = df
+
+        # Atomic write: write to temp file first, then replace
+        dir_name = os.path.dirname(excel_file)
+        try:
+            fd, tmp_path = tempfile.mkstemp(suffix='.xlsx', dir=dir_name)
+            os.close(fd)
+            combined_df.to_excel(tmp_path, index=False)
+            shutil.move(tmp_path, excel_file)
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
 
     def save_to_txt(self, product, file_name):
         """

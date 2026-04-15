@@ -3,7 +3,7 @@
 # =============================================================================
 
 # Define the root URL of the website to scrape
-ROOT_URL = "https://www.envaseonline.com/"
+ROOT_URL = "https://lafuente.es/"
 
 # Directly specify the sitemap URL (bypass robots.txt search). Leave empty to search automatically.
 SITEMAP_URL = ""
@@ -32,15 +32,15 @@ MAX_PRODUCTS_PER_MANUAL_LINK = 900
 # --- TITLE ---
 OG_TITLE = False
 TITLE_TAGS = [
-    {"tag": "h1", "class": "page-title"},
+    {"tag": "h1", "class": "product_title entry-title"},
 ]
 TITLE_SEPARATORS = [""]
 
 # --- PRICE ---
-CHECK_PRICE = False
+CHECK_PRICE = True
 LOWER_PRICE = False 
 PRICE_TAGS = [
-    {"tag": "span", "class": "textPreuDesde"},
+    {"tag": "p", "class": "price"},
 ]
 
 # --- DESCRIPTION ---
@@ -48,8 +48,7 @@ OG_DESCRIPTION = False
 MODIFY_DESCRIPTION = False
 DELETE_DESCRIPTION_CHARACTERS = ["---", "\\"]
 DESCRIPTION_TAGS = [
-    {"tag": "div", "class": "product data items mage-tabs-disabled"},
-    {"tag": "div", "itemprop": "description"},
+    {"tag": "div", "class": "product_meta"},
 
 ]
 
@@ -61,7 +60,7 @@ SUPPORT_LINKS_TAGS = [
 # --- IMAGES ---
 OG_IMAGE = True
 IMAGE_TAGS = [
-    {"tag": "img", "class": "fotorama__img"}
+    {"tag": "img", "class": "js-qv-product-cover"}
 ]
 
 

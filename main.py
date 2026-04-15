@@ -34,11 +34,14 @@ class ColorFormatter(logging.Formatter):
         return super().format(record)
 
 # Configure logging for both file and console output with color
+console_handler = logging.StreamHandler(
+    stream=open(sys.stdout.fileno(), mode='w', encoding='utf-8', errors='replace', closefd=False)
+)
 logging.basicConfig(level=logging.INFO,
                     format=f'{Style.BRIGHT}%(levelname)s -\t%(message)s{Style.RESET_ALL}',
                     handlers=[
-                        logging.FileHandler('scraper.log', mode='w'),
-                        logging.StreamHandler()
+                        logging.FileHandler('scraper.log', mode='w', encoding='utf-8'),
+                        console_handler
                     ])
 for handler in logging.root.handlers:
     handler.setFormatter(ColorFormatter(handler.formatter._fmt))
@@ -203,6 +206,9 @@ async def main():
     """
     Main function to orchestrate the web scraping process.
     """
+    results_manager = None
+    start_time = time.time()
+
     try:
         logging.info("Starting web scraping process with PARALLEL WORKERS...")
 
@@ -212,7 +218,6 @@ async def main():
         logging.info(f"{ROOT_URL} is {'not ' if not is_javascript_driven else ''}JavaScript-driven.")
         
         # Initialize variables
-        start_time = time.time()
         processed_urls = set()
 
         # Import links to ignore from ignore_links.txt
@@ -294,12 +299,27 @@ async def main():
         total_elapsed_time = time.time() - start_time
         logging.info(Fore.GREEN + Style.BRIGHT + f"Completed web scraping process in {total_elapsed_time:.2f} seconds")
     
+    except KeyboardInterrupt:
+        logging.warning("Ejecución interrumpida por el usuario (Ctrl+C). Guardando resultados...")
+        if results_manager:
+            results_manager.save_results()
+            total_elapsed_time = time.time() - start_time
+            logging.info(f"Resultados guardados correctamente tras interrupción. Tiempo: {total_elapsed_time:.2f}s | Productos: {results_manager.total_products} | Descartados: {results_manager.total_discarded_products}")
+        sys.exit(0)
+
     except Exception as e:
         logging.exception(f"An error occurred during the web scraping process: {e}")
+        if results_manager:
+            logging.info("Guardando resultados parciales antes de salir...")
+            results_manager.save_results()
 
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == 'test_sitemap':
         asyncio.run(test_sitemap())
     else:
-        asyncio.run(main())
+        try:
+            asyncio.run(main())
+        except KeyboardInterrupt:
+            logging.warning("Proceso terminado por el usuario.")
+            sys.exit(0)
